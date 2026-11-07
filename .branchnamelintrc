@@ -1,0 +1,5 @@
+{
+  "params": {
+    "type": ["feat", "fix", "chore", "tech"]
+  }
+}

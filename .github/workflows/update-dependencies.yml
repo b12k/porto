@@ -1,0 +1,82 @@
+name: Update dependencies
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: update-dependencies
+  cancel-in-progress: false
+
+env:
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: false
+
+jobs:
+  update:
+    name: Update dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/setup@v2
+        with:
+          runtime: node@26
+          install: false
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm i --no-frozen-lockfile
+
+      - name: Setup SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: github.com
+
+      - name: Use SSH remote
+        run: git remote set-url origin git@github.com:${{ github.repository }}.git
+
+      - name: Update
+        id: update
+        run: pnpm deps:update && pnpm deps:check
+
+      - name: Check changes
+        if: always()
+        id: changes
+        run: |
+          if git diff --quiet -- package.json; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit
+        if: always() && steps.changes.outputs.updated == 'true'
+        run: |
+          git config user.name ${{ vars.GIT_USER_NAME }}
+          git config user.email ${{ vars.GIT_USER_EMAIL }}
+          git add .
+          git commit -m "feat: update dependencies"
+          git push --no-verify
+
+      - name: Notify updated
+        if: steps.changes.outputs.updated == 'true'
+        run: pnpm ga:notify success "[@b12k/porto] Dependencies updated."
+
+      - name: Notify dependencies not changed
+        if: steps.changes.outputs.updated == 'false'
+        run: pnpm ga:notify info "[@b12k/porto] Dependencies not changed."
+
+      - name: Notify warning
+        if: failure() && steps.changes.outputs.updated == 'true'
+        run: pnpm ga:notify warning "[@b12k/porto] Dependencies partially updated."
+
+      - name: Notify error
+        if: failure() && steps.changes.outputs.updated == 'false'
+        run: pnpm ga:notify error "[@b12k/porto] Dependencies update failed."
