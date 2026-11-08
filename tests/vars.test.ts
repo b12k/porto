@@ -5,7 +5,7 @@ import type { Vars } from '../src/vars';
 
 import { PortoError } from '../src/error';
 import { buildBlock } from '../src/ports';
-import { mapBlockToVars, parseVars, validateVars, VARS_SCHEMA } from '../src/vars';
+import { assertVarsFit, mapBlockToVars, parseVarEntries, parseVars, VARS_SCHEMA } from '../src/vars';
 
 it('assigns each flattened variable its indexed port, including block-only factories', () => {
   const portBlock = buildBlock({ index: 2, size: 4, start: 1000 });
@@ -21,7 +21,7 @@ it('assigns each flattened variable its indexed port, including block-only facto
     },
     'LAST_PORT',
   ];
-  expect(mapBlockToVars(portBlock, vars)).toEqual({
+  expect(mapBlockToVars(portBlock, parseVarEntries(vars))).toEqual({
     API_PORT: 1008,
     CLIENT_HOST: 'wt2.localhost',
     CLIENT_URL: 'http://wt2.localhost:1010/2',
@@ -46,9 +46,9 @@ it('validates without executing factories and preserves their identities', () =>
     callsCount += 1;
     return `wt${block}.localhost`;
   }
-  const vars = validateVars([{ HOST: createHost }], 1);
+  const vars = parseVarEntries([{ HOST: createHost }]);
   expect(callsCount).toBe(0);
-  expect(vars[0]).toHaveProperty('HOST', createHost);
+  expect(vars[0]).toEqual(['HOST', createHost]);
   expect(mapBlockToVars(buildBlock({ index: 2, size: 1, start: 1000 }), vars)).toEqual({ HOST: 'wt2.localhost' });
   expect(callsCount).toBe(1);
 });
@@ -85,8 +85,9 @@ it('checks flattened variable count before calling factories', () => {
       },
     },
   ];
-  expect(() => validateVars(vars, 1)).toThrow(PortoError);
-  expect(() => mapBlockToVars(buildBlock({ index: 0, size: 1, start: 1000 }), vars)).toThrow(PortoError);
+  expect(() => {
+    assertVarsFit(parseVarEntries(vars).length, 1);
+  }).toThrow(PortoError);
   expect(callsCount).toBe(0);
 });
 
@@ -108,13 +109,16 @@ it('wraps factory errors with a variable name and the original cause', () => {
   const factoryError = new Error('Factory failed.');
   let mappingError: unknown;
   try {
-    mapBlockToVars(buildBlock({ index: 0, size: 1, start: 1000 }), [
-      {
-        TITLE() {
-          throw factoryError;
+    mapBlockToVars(
+      buildBlock({ index: 0, size: 1, start: 1000 }),
+      parseVarEntries([
+        {
+          TITLE() {
+            throw factoryError;
+          },
         },
-      },
-    ]);
+      ]),
+    );
   } catch (error) {
     mappingError = error;
   }

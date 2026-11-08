@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it } from '@rstest/core';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -47,19 +47,11 @@ async function createWorktree(name: string) {
 }
 
 async function expireRecords() {
-  const registryPath = path.join(repositoryPath, '.git', 'porto');
-  const fileNames = await readdir(registryPath);
-  await Promise.all(
-    fileNames
-      .filter((fileName) => fileName.endsWith('.json'))
-      .map(async (fileName) => {
-        const filePath = path.join(registryPath, fileName);
-        const contents = await readFile(filePath, 'utf8');
-        await writeFile(
-          filePath,
-          contents.replaceAll(/"lastUsedAt"\s*:\s*"[^"]+"/gu, '"lastUsedAt":"2000-01-01T00:00:00.000Z"'),
-        );
-      }),
+  const registryPath = path.join(repositoryPath, '.git', 'porto-registry.json');
+  const contents = await readFile(registryPath, 'utf8');
+  await writeFile(
+    registryPath,
+    contents.replaceAll(/"lastUsedAt"\s*:\s*"[^"]+"/gu, '"lastUsedAt":"2000-01-01T00:00:00.000Z"'),
   );
 }
 
@@ -126,6 +118,21 @@ it('coordinates concurrent processes from the same and different worktrees', asy
   expect(JSON.parse(await runCliOutput(['stats', '--json']))).toHaveLength(2);
 });
 
+it('keeps a reservation with a moved worktree and shows the new path', async () => {
+  const worktreePath = await createWorktree('original');
+  const movedPath = path.join(directoryPath, 'moved checkout');
+  expect(await runCliOutput(reserveArgs('--keep'), worktreePath)).toBe('0\n');
+  await runGit(['worktree', 'move', worktreePath, movedPath]);
+
+  expect(await runCliOutput(['current'], movedPath)).toBe('0\n');
+  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toMatchObject([
+    { index: 0, keep: true, worktree: await realpath(movedPath) },
+  ]);
+  expect(await runCliOutput(reserveArgs(), movedPath)).toBe('0\n');
+  await runCli(['release'], movedPath);
+  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toEqual([]);
+});
+
 it('persists a refreshed reservation even with a submillisecond idle TTL', async () => {
   await runCli(reserveArgs('--idle', '0.000000001'));
   await runCli(reserveArgs('--idle', '0.000000001'));
@@ -177,7 +184,7 @@ it('keeps unexpired blocks and reuses the lowest block after idle cleanup', asyn
 
 it('recovers a stale process lock', async () => {
   await runCli(reserveArgs());
-  const lockPath = path.join(repositoryPath, '.git', 'porto', 'registry.lock');
+  const lockPath = path.join(repositoryPath, '.git', 'porto-registry.json.lock');
   const staleAt = new Date(Date.now() - 20_000);
   await mkdir(lockPath);
   await utimes(lockPath, staleAt, staleAt);
@@ -203,45 +210,36 @@ it('supports a worktree of a bare repository and rejects the bare directory itse
   const worktreePath = path.join(directoryPath, 'bare-worktree');
   await runGit(['worktree', 'add', '--detach', worktreePath], barePath);
   expect(await runCliOutput(reserveArgs(), worktreePath)).toBe('0\n');
-  const fileNames = await readdir(path.join(barePath, 'porto'));
-  expect(fileNames.filter((fileName) => fileName.endsWith('.json'))).toHaveLength(1);
+  const records: unknown = JSON.parse(await readFile(path.join(barePath, 'porto-registry.json'), 'utf8'));
+  expect(records).toHaveLength(1);
   await expect(runCli(reserveArgs(), barePath)).rejects.toThrow('working tree');
 });
 
 it('fails closed on a corrupt registry and leaves its contents intact', async () => {
   await runCli(reserveArgs());
-  const registryPath = path.join(repositoryPath, '.git', 'porto');
-  const fileNames = await readdir(registryPath);
-  const fileName = fileNames.find((entry) => entry.endsWith('.json'));
-  if (!fileName) throw new Error('Missing reservation.');
-  const filePath = path.join(registryPath, fileName);
+  const filePath = path.join(repositoryPath, '.git', 'porto-registry.json');
   await writeFile(filePath, '{broken');
   await expect(runCli(reserveArgs())).rejects.toThrow('Cannot read reservation');
   expect(await readFile(filePath, 'utf8')).toBe('{broken');
 });
-it('maps indexed templates and preserves JSON types', async () => {
+it('maps indexed templates into text stdout and typed JSON files', async () => {
   const vars = 'API_PORT;CLIENT_HOST:wt{{block}}.localhost;URL:http://localhost:{{port}}/{{port}}';
-  const result = await runCli(reserveArgs('--size', '3', '--vars', vars, '--json', '--write=ports.json', '--env-file'));
-  expect(JSON.parse(result.stdout)).toEqual({
+  const result = await runCli(reserveArgs('--size', '3', '--vars', vars, '--json-file=ports.json', '--env'));
+  expect(result.stdout).toBe(
+    `API_PORT=${start}\nCLIENT_HOST=wt0.localhost\nURL=http://localhost:${start + 2}/${start + 2}\n`,
+  );
+  const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
+  expect(JSON.parse(jsonOutput)).toEqual({
     API_PORT: start,
     CLIENT_HOST: 'wt0.localhost',
     URL: `http://localhost:${start + 2}/${start + 2}`,
   });
-  expect(await readFile(path.join(repositoryPath, 'ports.json'), 'utf8')).toBe(result.stdout);
   expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toContain(`API_PORT=${start}\n`);
-});
-
-it('creates exports only when requested, supports default filenames and PORTO_BLOCK', async () => {
-  await runCli(reserveArgs());
-  expect(await readdir(repositoryPath)).toEqual(['.git']);
-  await runCli(reserveArgs('--write', '--env-file'));
-  expect(await readFile(path.join(repositoryPath, 'porto.lock'), 'utf8')).toBe('0\n');
-  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('PORTO_BLOCK=0\n');
 });
 
 it('preserves JSON template strings without requiring env quoting', async () => {
   const title = 'Bob\'s "dev"';
-  const result = await runCli(reserveArgs('--vars', `TITLE:${title}`, '--json', '--write=ports.json'));
+  const result = await runCli(reserveArgs('--vars', `TITLE:${title}`, '--json', '--json-file=ports.json'));
   expect(JSON.parse(result.stdout)).toEqual({ TITLE: title });
   expect(await readFile(path.join(repositoryPath, 'ports.json'), 'utf8')).toBe(result.stdout);
 });
@@ -258,8 +256,9 @@ it('updates existing env keys and appends missing ones, preserving comments and 
 it('preserves multiline env values and numeric filenames', async () => {
   const envPath = path.join(repositoryPath, '001');
   await writeFile(envPath, 'TEXT="line one\nPORTO_BLOCK=inside\nline three"\nPORTO_BLOCK=9 # keep\n');
-  await runCli(reserveArgs('--write=000', '--env-file=001'));
-  expect(await readFile(path.join(repositoryPath, '000'), 'utf8')).toBe('0\n');
+  await runCli(reserveArgs('--json-file=000', '--env-file=001'));
+  const jsonOutput = await readFile(path.join(repositoryPath, '000'), 'utf8');
+  expect(JSON.parse(jsonOutput)).toEqual({ end: start + 1, index: 0, start });
   expect(await readFile(envPath, 'utf8')).toBe(
     'TEXT="line one\nPORTO_BLOCK=inside\nline three"\nPORTO_BLOCK=0 # keep\n',
   );
@@ -273,7 +272,12 @@ it('rejects bad arguments, unknown commands and invalid mapping before allocatin
       reserveArgs('--vars', 'BAD-NAME'),
       reserveArgs('--size', '0'),
       reserveArgs('--idle', 'NaN'),
-      reserveArgs('--write='),
+      reserveArgs('--json-file='),
+      reserveArgs('--json-file'),
+      reserveArgs('--write=ports.json'),
+      reserveArgs('--no-json'),
+      reserveArgs('--env-file='),
+      reserveArgs('--env-file'),
       ['unknown'],
       ['reserve', '--bogus'],
       ['current', 'extra'],

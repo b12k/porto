@@ -26,10 +26,10 @@ async function closeListener(server: ReturnType<typeof createServer>) {
   await closed;
 }
 
-async function createListener(port = 0) {
+async function createListener(port = 0, host = '127.0.0.1') {
   const server = createServer();
   servers.push(server);
-  server.listen({ host: '127.0.0.1', port });
+  server.listen({ host, port });
   await once(server, 'listening');
   const address = server.address();
   if (typeof address !== 'object' || address === null) throw new Error('Missing server address.');
@@ -55,7 +55,7 @@ async function runApi(source: string, cwd = repositoryPath) {
 }
 
 function getRegistryPath() {
-  return path.join(repositoryPath, '.git', 'porto', 'registry.json');
+  return path.join(repositoryPath, '.git', 'porto-registry.json');
 }
 
 async function expireRecords() {
@@ -99,8 +99,8 @@ afterEach(async () => {
 });
 
 it('defaults new reservations to keep false and centralizes optional numeric defaults', async () => {
-  expect(parseOptions({})).toEqual({ idleTtlMinutes: 60, size: 10, start: 1000 });
-  expect(parseOptions({ size: undefined, start: undefined })).toEqual({ idleTtlMinutes: 60, size: 10, start: 1000 });
+  expect(parseOptions({})).toEqual({ idleTtlMinutes: 60, size: 10, start: 10_000 });
+  expect(parseOptions({ size: undefined, start: undefined })).toEqual({ idleTtlMinutes: 60, size: 10, start: 10_000 });
   await runApi(buildReserveSource());
   expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await stats()));'))).toMatchObject([
     { keep: false },
@@ -157,15 +157,16 @@ it('requires free ports for explicit release even when a reservation is kept', a
   expect(JSON.parse(await runApi('await release(); process.stdout.write(JSON.stringify(await stats()));'))).toEqual([]);
 });
 
-it('loads old reservation records without keep as normal idle reservations', async () => {
-  await runApi(buildReserveSource());
-  const registryPath = getRegistryPath();
-  const contents = await readFile(registryPath, 'utf8');
-  await writeFile(registryPath, contents.replaceAll('"keep":false,', '').replaceAll(',"keep":false', ''));
-  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await stats()));'))).toMatchObject([
-    { keep: false },
-  ]);
+it('uses the saved host for release and cleanup', async () => {
+  const host = process.platform === 'win32' ? '127.0.0.2' : '127.0.0.1';
+  await runApi(`await reserve(${JSON.stringify({ host, size: 1, start })});`);
   await expireRecords();
+  const { server } = await createListener(start, host);
+  await expect(runApi('await release();')).rejects.toThrow('Cannot release reservations while ports are in use.');
+  expect(
+    JSON.parse(await runApi('await cleanup(); process.stdout.write(JSON.stringify(await stats()));')),
+  ).toMatchObject([{ host, start }]);
+  await closeListener(server);
   expect(JSON.parse(await runApi('await cleanup(); process.stdout.write(JSON.stringify(await stats()));'))).toEqual([]);
 });
 

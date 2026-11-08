@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export function checkIsFileMissing(error: unknown) {
@@ -27,21 +27,18 @@ export async function fetchCanonicalPath(filePath: string) {
   }
 }
 
-async function fetchFileMode(filePath: string) {
-  try {
-    const file = await stat(filePath);
-    return file.mode;
-  } catch (error) {
-    if (!checkIsFileMissing(error)) throw error;
-    return 0o666;
-  }
-}
-
 export async function writeFileAtomically(filePath: string, contents: string) {
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
-  const mode = await fetchFileMode(filePath);
+  let mode: number | undefined;
+  try {
+    ({ mode } = await stat(filePath));
+  } catch (error) {
+    if (!checkIsFileMissing(error)) throw error;
+  }
   try {
     await writeFile(temporaryPath, contents, { flag: 'wx', mode });
+    // File creation applies umask even when a mode is provided.
+    if (mode !== undefined) await chmod(temporaryPath, mode);
     await rename(temporaryPath, filePath);
   } finally {
     await rm(temporaryPath, { force: true });

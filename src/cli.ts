@@ -1,77 +1,68 @@
-#!/usr/bin/env -S node --
+#!/usr/bin/env node
 
 import { Command } from 'commander';
 import { pickBy } from 'es-toolkit';
-import path from 'node:path';
 import updateNotifier from 'update-notifier';
 
 import type { PortoConfig } from './config';
-import type { PortBlock } from './index';
-import type { Environment } from './output';
 
-import { DEFAULT_FILES, fetchConfig, name, parseReserveConfig, version } from './config';
-import { fetchCanonicalPath, writeFileAtomically } from './files';
-import { BusyPortsError, cleanup, current, PortoError, release, reserve, stats } from './index';
+import { applyReserveDefaults, fetchConfig, name, parseConfig, version } from './config';
+import { fetchGitContext } from './git';
+import { BusyPortsError, cleanup, current, PortoError, release, stats } from './index';
 import { logError } from './log';
-import { formatEnvironment, formatTable, updateEnvironmentFile } from './output';
+import {
+  fetchExportPaths,
+  formatReserveOutput,
+  formatTable,
+  updateEnvironmentFile,
+  writeReserveJsonFile,
+} from './output';
+import { reserveBlock } from './reserve';
 import { mapBlockToVars, parseVars } from './vars';
 
-type ReserveFlags = Omit<PortoConfig, 'idleTtlMinutes' | 'vars'> & { idle?: number; vars?: false | string };
+type ReserveFlags = Omit<PortoConfig, 'idleTtlMinutes' | 'vars'> & {
+  idle?: number;
+  json?: boolean;
+  vars?: false | string;
+};
 
-function getExportPath(flag: boolean | string, fallback: string) {
-  if (typeof flag === 'string' && flag.length === 0) {
-    throw new PortoError('exportInvalid', 'Filename must not be empty.');
-  }
-  return path.resolve(typeof flag === 'string' ? flag : fallback);
-}
-
-async function fetchExportPaths(settings: PortoConfig) {
-  const outputPath =
-    settings.write === undefined || settings.write === false
-      ? undefined
-      : await fetchCanonicalPath(getExportPath(settings.write, DEFAULT_FILES.write));
-  const environmentPath =
-    settings.envFile === undefined || settings.envFile === false
-      ? undefined
-      : await fetchCanonicalPath(getExportPath(settings.envFile, DEFAULT_FILES.envFile));
-  const arePathsEqual =
-    outputPath !== undefined &&
-    environmentPath !== undefined &&
-    (process.platform === 'win32'
-      ? outputPath.toLowerCase() === environmentPath.toLowerCase()
-      : outputPath === environmentPath);
-  if (arePathsEqual) throw new PortoError('exportInvalid', '--write and --env-file must use different files.');
-  return { environmentPath, outputPath };
-}
-
-async function fetchSettings(flags: ReserveFlags, command: Command) {
-  const configured = await fetchConfig();
-  const { idle, vars, ...overrides } = pickBy(flags, (_flag, key) => command.getOptionValueSource(key) === 'cli');
-  return parseReserveConfig({
-    ...configured,
-    ...overrides,
-    ...(idle === undefined ? {} : { idleTtlMinutes: idle }),
-    ...(vars === undefined ? {} : { vars: vars === false ? undefined : parseVars(vars) }),
-  });
-}
-
-function formatReserveOutput(block: PortBlock, environment: Environment | undefined, isJson: boolean) {
-  if (isJson) return JSON.stringify(environment ?? { end: block.end, index: block.index, start: block.start });
-  return environment ? formatEnvironment(environment) : String(block.index);
+async function fetchSettings(flags: ReserveFlags, command: Command, worktree: string) {
+  const configured = await fetchConfig(worktree);
+  const { idle, json, vars, ...overrides } = pickBy(flags, (_flag, key) => command.getOptionValueSource(key) === 'cli');
+  const explicit = parseConfig({ ...overrides, ...(idle === undefined ? {} : { idleTtlMinutes: idle }) });
+  let entries = configured.vars;
+  if (vars !== undefined) entries = vars === false ? undefined : parseVars(vars);
+  return { ...applyReserveDefaults({ ...configured, ...explicit, vars: entries }), json: json ?? false };
 }
 
 function writeOutput(contents: string) {
   process.stdout.write(`${contents}\n`);
 }
 
+async function runHook(hookName: string, hook: () => Promise<void> | void) {
+  try {
+    await hook();
+  } catch (error) {
+    throw new PortoError('hookFailed', `${hookName}: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    });
+  }
+}
+
 async function handleReserve(flags: ReserveFlags, command: Command) {
-  const settings = await fetchSettings(flags, command);
-  const { environmentPath, outputPath } = await fetchExportPaths(settings);
-  const block = await reserve(settings);
-  const environment = settings.vars === undefined ? undefined : mapBlockToVars(block, settings.vars);
-  const output = formatReserveOutput(block, environment, settings.json ?? false);
-  if (outputPath) await writeFileAtomically(outputPath, `${output}\n`);
-  if (environmentPath) await updateEnvironmentFile(environmentPath, environment ?? { PORTO_BLOCK: block.index });
+  const git = await fetchGitContext();
+  const { vars: entries, ...settings } = await fetchSettings(flags, command, git.worktree);
+  const { environmentPath, jsonPath } = await fetchExportPaths(settings, git.commonDirectory);
+  const prepared = await reserveBlock({ ...settings, git, portsCount: entries?.length ?? 0 }, ({ ports, ...block }) => {
+    const environment = entries === undefined ? undefined : mapBlockToVars(block, entries);
+    return { block, environment, output: formatReserveOutput(block, environment, settings.json), ports };
+  });
+  const { block, environment, output, ports } = prepared;
+  if (jsonPath) await writeReserveJsonFile(jsonPath, block, environment);
+  if (environmentPath) {
+    await updateEnvironmentFile(environmentPath, environment ?? { PORTO_BLOCK: block.index }, git.commonDirectory);
+  }
+  await runHook('onReserved', async () => settings.onReserved?.(block, ports));
   writeOutput(output);
 }
 
@@ -83,19 +74,20 @@ updateNotifier({
 }).notify({ defer: false });
 
 cli
-  .command('reserve')
+  .command('reserve', { isDefault: true })
   .description('Reserve a stable TCP port block for the current checkout')
-  .option('--start <port>', 'First port of the range (default: 1000)', Number)
+  .option('--start <port>', 'First port of the range (default: 10000)', Number)
+  .option('--host <host>', 'Host to check for busy ports (default: detect local addresses)')
   .option('--size <count>', 'Number of ports in each block (default: 10)', Number)
   .option('--idle <minutes>', 'Idle TTL in minutes (default: 60)', Number)
   .option('--vars <entries>', 'Semicolon-separated NAME or NAME:template variables')
   .option('--no-vars', 'Ignore configured variables')
-  .option('--json', 'Print JSON')
-  .option('--no-json', 'Print text')
-  .option('--write [file]', 'Save stdout to a file (default: porto.lock)')
-  .option('--no-write', 'Skip the configured output file')
-  .option('--env-file [file]', 'Update an env file (default: .env)')
-  .option('--no-env-file', 'Skip the configured env file')
+  .option('--json', 'Print JSON to stdout')
+  .option('--json-file <file>', 'Save JSON to a file independently of stdout')
+  .option('--no-json-file', 'Skip the configured JSON file')
+  .option('--env', 'Update the env file (default: disabled)')
+  .option('--no-env', 'Skip the env file')
+  .option('--env-file <file>', 'Set the env filename and enable env output (default: .env)')
   .option('--keep', 'Keep this reservation until explicitly released')
   .option('--no-keep', 'Restore idle cleanup for this reservation')
   .action(handleReserve);
@@ -103,14 +95,12 @@ cli
 cli
   .command('current')
   .description('Read the reservations of the current checkout')
-  .option('--json', 'Print JSON')
-  .option('--no-json', 'Print text')
-  .action(async (flags: ReserveFlags, command: Command) => {
-    const settings = await fetchSettings(flags, command);
+  .option('--json', 'Print JSON to stdout')
+  .action(async (flags: ReserveFlags) => {
     const blocks = await current();
     if (blocks.length === 0) throw new PortoError('reservationNotFound');
     writeOutput(
-      settings.json
+      flags.json
         ? JSON.stringify(blocks.length === 1 ? blocks[0] : blocks)
         : blocks.map((block) => block.index).join('\n'),
     );
@@ -119,13 +109,11 @@ cli
 cli
   .command('stats')
   .description('List all reservations in this repository')
-  .option('--json', 'Print JSON')
-  .option('--no-json', 'Print text')
-  .action(async (flags: ReserveFlags, command: Command) => {
-    const settings = await fetchSettings(flags, command);
+  .option('--json', 'Print JSON to stdout')
+  .action(async (flags: ReserveFlags) => {
     const reservations = await stats();
     writeOutput(
-      settings.json
+      flags.json
         ? JSON.stringify(reservations)
         : formatTable(
             ['BLOCK', 'PORTS', 'WORKTREE', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
@@ -146,7 +134,14 @@ cli
   .command('release')
   .description('Release current checkout reservations if every port is free')
   .action(async () => {
-    await release();
+    const { worktree } = await fetchGitContext();
+    const { onReleased } = await fetchConfig(worktree);
+    const blocks = await release();
+    const results = await Promise.allSettled(
+      blocks.map(async ({ ports, ...block }) => runHook('onReleased', async () => onReleased?.(block, ports))),
+    );
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure) throw failure.reason;
   });
 cli
   .command('cleanup')
@@ -155,9 +150,6 @@ cli
     await cleanup();
   });
 cli.version(version);
-cli.action(() => {
-  cli.outputHelp();
-});
 
 try {
   await cli.parseAsync();

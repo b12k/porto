@@ -1,92 +1,89 @@
-# Porto
+# ⚓ Porto
 
-Stable TCP port blocks for ordinary Git checkouts and linked worktrees. Requires Node.js 24+ and Git.
+Porto reserves TCP port blocks for Git checkouts and worktrees.
+
+## 🚀 Start
+
+Install Node.js 24 or later and Git 2.36 or later.
 
 ```sh
 pnpm add -D @b12k/porto
+pnpm exec porto --vars API_PORT --env
 ```
 
-## Stable blocks
+Porto writes `API_PORT` to `.env`. Run the same command again to reuse the block.
 
-With `start: 1000` and `size: 10`:
+| Worktree | Block | Ports       |
+| -------- | ----: | ----------- |
+| Main     |     0 | 10000–10009 |
+| Feature  |     1 | 10010–10019 |
 
-| Checkout | Block | Ports     |
-| -------- | ----: | --------- |
-| main     |     0 | 1000–1009 |
-| feature  |     1 | 1010–1019 |
+## 🖥️ Commands
 
-Repeated calls reuse blocks for a range. New blocks skip reserved or busy ports.
+Run each command with `pnpm exec porto`. `reserve` is the default command.
+
+| Command   | Action                                                    |
+| --------- | --------------------------------------------------------- |
+| `reserve` | Reserve a block and print its index or variables.         |
+| `current` | Show the blocks for this checkout.                        |
+| `stats`   | Show all reservations for this repository.                |
+| `release` | Release this checkout's blocks when their ports are free. |
+| `cleanup` | Remove expired reservations when their ports are free.    |
+
+| `reserve` option                        | Action                                                       |
+| --------------------------------------- | ------------------------------------------------------------ |
+| `--start <port>`                        | Set the first port of the range. Default `10000`.            |
+| `--host <host>`                         | Check this host for busy ports. Default local addresses.     |
+| `--size <count>`                        | Set the ports per block. Default `10`.                       |
+| `--idle <minutes>`                      | Set the idle time limit. Default `60`.                       |
+| `--keep` / `--no-keep`                  | Turn idle cleanup off or on for the block.                   |
+| `--vars <entries>` / `--no-vars`        | Set or clear the variable list.                              |
+| `--env` / `--no-env`                    | Turn env file output on or off. Default off. File `.env`.    |
+| `--env-file <file>`                     | Set the env file path and turn on env output.                |
+| `--json-file <file>` / `--no-json-file` | Set or clear the JSON output file.                           |
+| `--json`                                | Print JSON to stdout. Also works with `current` and `stats`. |
+
+Use `-h` or `--help` for help. Use `-V` or `--version` for the version.
+
+Separate `--vars` entries with `;`. Use `NAME` for a port or `NAME:template` for text. Templates accept `{{block}}` and `{{port}}`.
+
+With no variables, `--env` writes `PORTO_BLOCK`.
+
+## ⚙️ Config
+
+Create `porto.config.ts` or `porto.config.js` in your checkout. Porto searches from the current directory to the checkout root. If both files are in one directory, Porto uses the TypeScript file.
+
+CLI options override config values. Config values override defaults.
+
+Set `host` in config or use `--host` to check a specific address. Porto saves it for `release` and `cleanup`.
+
+```ts
+import { defineConfig } from '@b12k/porto';
+
+export default defineConfig({
+  envFile: '.env.local',
+  vars: ['API_PORT', { WEB_URL: (_block, port) => `http://localhost:${port}` }],
+  onReserved(block, ports) {
+    console.error(`Block ${block.index} has ports ${ports.join(', ')}`);
+  },
+});
+```
+
+Relative paths in config start at the config directory. Relative paths in flags start at the current directory.
+
+Each variable selects a port by position. A function receives the block index, port, and zero-based variable index.
+
+A hook receives the block and its assigned ports. `onReserved` runs after file output. `onReleased` runs once per freed block. Porto runs release hooks in parallel.
+
+## 📦 API
 
 ```js
 import { reserve } from '@b12k/porto';
 
-const block = await reserve({ start: 1000, size: 10 });
-block.index; // 0
-block.getPort(); // 1000
-block.getPort(1); // 1001
+const block = await reserve({ vars: ['API_PORT'] });
+const apiPort = block.getPort();
 ```
 
-Defaults: `start: 1000`, `size: 10`, `idleTtlMinutes: 60`. The API takes explicit options; it does not load config files.
+The API also provides `current`, `stats`, `release`, and `cleanup`.
 
-## Configuration
-
-```ts
-// porto.config.ts
-import { defineConfig } from '@b12k/porto';
-
-export default defineConfig({
-  start: 1000,
-  size: 10,
-  idleTtlMinutes: 60,
-  keep: true,
-  vars: [
-    'API_PORT',
-    { CLIENT_HOST: (block) => `wt${block}.localhost` },
-    { CLIENT_URL: (block, port, idx) => `http://wt${block}.localhost:${port}/${idx}` },
-  ],
-  envFile: '.env.local',
-  write: 'ports.json',
-  json: true,
-});
-```
-
-Variables flatten in order. Callbacks receive the block index, `port = first port + idx`, and the zero-based `idx`. Every entry has a position, including entries that only use the block index. For block `0`:
-
-```dotenv
-API_PORT=1000
-CLIENT_HOST=wt0.localhost
-CLIENT_URL=http://wt0.localhost:1002/2
-```
-
-The CLI loads the nearest `porto.config.ts` or `porto.config.js`, searching from cwd to the checkout root. `.ts` wins ties. **Explicit flags > config > defaults.** Config paths are relative to the config file; CLI paths are relative to cwd.
-
-## CLI
-
-```sh
-porto reserve --start 1000 --size 10 --idle 60
-# Prints the block index when vars and JSON are disabled
-
-porto reserve --vars 'API_PORT;HOST:wt{{block}}.localhost;URL:http://localhost:{{port}}' --env-file
-```
-
-`--vars` uses `NAME` or `NAME:template` entries separated by `;`. `{{block}}` inserts the block index; `{{port}}` inserts that entry's indexed port.
-
-| Flag                | Result                                                         |
-| ------------------- | -------------------------------------------------------------- |
-| `--json`            | JSON block or variables; also applies to `current` and `stats` |
-| `--write[=file]`    | Save stdout; default `porto.lock`                              |
-| `--env-file[=file]` | Update `.env` by default; writes `PORTO_BLOCK` without vars    |
-| `--keep`            | Protect the reservation from idle cleanup                      |
-
-`--no-*` forms disable `vars`, `env-file`, `write`, `json`, and `keep`. Stored `keep` persists when omitted; explicit `false` disables it.
-
-```sh
-porto current # Read this checkout's blocks
-porto stats   # List repository reservations
-porto release # Release this checkout's blocks when all ports are free
-porto cleanup # Remove expired, unkept reservations when all ports are free
-```
-
-The API exports the same functions. `reserve` refreshes idle TTL and runs cleanup; read commands do neither. Busy release fails without deleting anything.
-
-Reservations share `<git-common-dir>/porto/registry.json`. Port checks do not hold sockets; separate repositories have separate registries. Results use stdout; diagnostics and interactive update notices use stderr. Set `NO_UPDATE_NOTIFIER=1` to disable version checks.
+Porto stores reservations in `<git-common-dir>/porto-registry.json`.

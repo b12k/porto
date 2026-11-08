@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, expect, it } from '@rstest/core';
-import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-
-import type { ReservationRecord } from '../src/registry';
 
 import { PortoError } from '../src/error';
 import { updateRegistry } from '../src/registry';
@@ -17,27 +14,21 @@ function buildRecord() {
     index: 0,
     keep: false,
     lastUsedAt: new Date().toISOString(),
+    ports: [],
     size: 2,
     start: 20_000,
     worktree: path.join(directoryPath, 'checkout'),
+    worktreeId: '.',
   };
 }
 
 async function readSnapshot() {
-  const snapshot: unknown = JSON.parse(await readFile(path.join(directoryPath, 'porto', 'registry.json'), 'utf8'));
+  const snapshot: unknown = JSON.parse(await readFile(path.join(directoryPath, 'porto-registry.json'), 'utf8'));
   return snapshot;
-}
-
-async function writeLegacyRecord(record: ReservationRecord) {
-  const fileName = `${createHash('sha256')
-    .update(JSON.stringify([record.worktree, record.start, record.size]))
-    .digest('hex')}.json`;
-  await writeFile(path.join(directoryPath, 'porto', fileName), JSON.stringify(record));
 }
 
 beforeEach(async () => {
   directoryPath = await mkdtemp(path.join(tmpdir(), 'porto-registry-'));
-  await mkdir(path.join(directoryPath, 'porto'));
 });
 
 afterEach(async () => {
@@ -48,19 +39,20 @@ afterEach(async () => {
   await rm(target, { force: true, recursive: true });
 });
 
-it('imports existing reservations and treats an empty snapshot as authoritative', async () => {
+it('stores new reservations in one JSON file without a permanent lock directory', async () => {
   const record = buildRecord();
-  await writeLegacyRecord(record);
-  expect(await updateRegistry(directoryPath, (records) => records.length)).toBe(1);
   await updateRegistry(directoryPath, (records) => {
-    for (const reservation of records) reservation.lastUsedAt = '2000-01-01T00:00:00.000Z';
+    records.push(record);
   });
-  expect(await readSnapshot()).toEqual([{ ...record, lastUsedAt: '2000-01-01T00:00:00.000Z' }]);
-  await updateRegistry(directoryPath, (records) => {
-    records.splice(0);
-  });
-  expect(await readSnapshot()).toEqual([]);
-  expect(await updateRegistry(directoryPath, (records) => records.length)).toBe(0);
+  expect(await readdir(directoryPath)).toEqual(['porto-registry.json']);
+  expect(await readSnapshot()).toEqual([record]);
+});
+
+it('fails on a corrupt porto-registry.json and preserves its contents', async () => {
+  const filePath = path.join(directoryPath, 'porto-registry.json');
+  await writeFile(filePath, '{broken');
+  await expect(updateRegistry(directoryPath, (records) => records)).rejects.toBeInstanceOf(PortoError);
+  expect(await readFile(filePath, 'utf8')).toBe('{broken');
 });
 
 it('does not persist partial callback changes after a failed operation', async () => {
@@ -79,9 +71,27 @@ it('does not persist partial callback changes after a failed operation', async (
   expect(await updateRegistry(directoryPath, (records) => records)).toEqual([record]);
 });
 
-it('rejects overlapping blocks imported from an interrupted older allocation', async () => {
+it('rejects overlapping blocks in the registry', async () => {
   const record = buildRecord();
-  await writeLegacyRecord(record);
-  await writeLegacyRecord({ ...record, worktree: path.join(directoryPath, 'other') });
+  await writeFile(
+    path.join(directoryPath, 'porto-registry.json'),
+    JSON.stringify([record, { ...record, worktree: path.join(directoryPath, 'other'), worktreeId: 'worktrees/other' }]),
+  );
   await expect(updateRegistry(directoryPath, (records) => records)).rejects.toBeInstanceOf(PortoError);
 });
+
+it.each(['keep', 'ports', 'worktreeId'])('rejects a reservation missing its required %s field', async (field) => {
+  await writeFile(
+    path.join(directoryPath, 'porto-registry.json'),
+    JSON.stringify([{ ...buildRecord(), [field]: undefined }]),
+  );
+  await expect(updateRegistry(directoryPath, (records) => records)).rejects.toBeInstanceOf(PortoError);
+});
+
+it.each([{ ports: [19_999] }, { ports: [20_002] }, { ports: [20_000, 20_000] }])(
+  'rejects invalid assigned ports: %s',
+  async ({ ports }) => {
+    await writeFile(path.join(directoryPath, 'porto-registry.json'), JSON.stringify([{ ...buildRecord(), ports }]));
+    await expect(updateRegistry(directoryPath, (records) => records)).rejects.toBeInstanceOf(PortoError);
+  },
+);

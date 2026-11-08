@@ -52,6 +52,14 @@ it('updates the first env key while preserving a UTF-8 BOM', async () => {
   expect(await readFile(filePath, 'utf8')).toBe('\uFEFFAPI_PORT=1000\nOTHER=keep\n');
 });
 
+it('appends a missing env key without replacing text inside another value', async () => {
+  const filePath = path.join(directoryPath, '.env');
+  const contents = "APP.TITLE='hello\nAPI_PORT=1\nworld'\nAPI_PORT_OLD=2\n";
+  await writeFile(filePath, contents);
+  await updateEnvironmentFile(filePath, { API_PORT: 1000 });
+  expect(await readFile(filePath, 'utf8')).toBe(`${contents}API_PORT=1000\n`);
+});
+
 it('updates the real env file without replacing its symbolic link', async () => {
   const filePath = path.join(directoryPath, '.env.local');
   const linkPath = path.join(directoryPath, '.env');
@@ -63,7 +71,7 @@ it('updates the real env file without replacing its symbolic link', async () => 
   expect(await readFile(filePath, 'utf8')).toBe('API_PORT=1000\n');
 });
 
-it('rejects write and env exports that resolve to the same file', async () => {
+it('rejects JSON and env exports that resolve to the same file', async () => {
   await createRepository();
   const filePath = path.join(directoryPath, '.env.local');
   const linkPath = path.join(directoryPath, '.env');
@@ -72,10 +80,10 @@ it('rejects write and env exports that resolve to the same file', async () => {
   await expect(
     execFileAsync(
       process.execPath,
-      ['--import', tsxPath, '--', cliPath, 'reserve', `--write=${filePath}`, `--env-file=${linkPath}`],
+      ['--import', tsxPath, '--', cliPath, 'reserve', `--json-file=${filePath}`, `--env-file=${linkPath}`],
       { cwd: directoryPath },
     ),
-  ).rejects.toThrow('--write and --env-file must use different files.');
+  ).rejects.toThrow('--json-file and --env-file must use different files.');
   expect(await readFile(filePath, 'utf8')).toBe('OTHER=keep\n');
 });
 
@@ -94,17 +102,17 @@ it.skipIf(process.platform !== 'win32')('rejects case aliases of the same new ex
   await expect(
     execFileAsync(
       process.execPath,
-      ['--import', tsxPath, '--', cliPath, 'reserve', '--write=.ENV', '--env-file=.env'],
+      ['--import', tsxPath, '--', cliPath, 'reserve', '--json-file=.ENV', '--env-file=.env'],
       { cwd: directoryPath },
     ),
-  ).rejects.toThrow('--write and --env-file must use different files.');
+  ).rejects.toThrow('--json-file and --env-file must use different files.');
 });
 
 it.skipIf(process.platform === 'win32')('preserves file permissions when replacing its contents', async () => {
   const filePath = path.join(directoryPath, '.env');
   await writeFile(filePath, 'SECRET=keep\n');
-  await chmod(filePath, 0o600);
+  await chmod(filePath, 0o664);
   await writeFileAtomically(filePath, 'SECRET=keep\nAPI_PORT=1000\n');
   const file = await stat(filePath);
-  expect(file.mode.toString(8).slice(-3)).toBe('600');
+  expect(file.mode.toString(8).slice(-3)).toBe('664');
 });
