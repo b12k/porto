@@ -5,10 +5,9 @@ import type { PortBlock } from './index';
 
 import { PortoError } from './error';
 
+export type VarEntry = [string, undefined | VarFactory];
 export type VarFactory = (block: number, port: number, idx: number) => string;
 export type Vars = (Record<string, VarFactory> | string)[];
-
-type VarEntry = [string, undefined | VarFactory];
 
 const VAR_NAME_SCHEMA = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
 const VAR_TEXT_SCHEMA = z.string().regex(/^[^\r\n\0]*$/u);
@@ -20,19 +19,16 @@ const VAR_RECORD_SCHEMA = z.custom<Record<string, VarFactory>>((record) => {
 });
 const VAR_ENTRY_SCHEMA = z.union([VAR_NAME_SCHEMA, VAR_RECORD_SCHEMA]);
 
-function getVarEntries(vars: Vars) {
-  return vars.flatMap<VarEntry>((entry) => (typeof entry === 'string' ? [[entry, undefined]] : Object.entries(entry)));
-}
+export const VARS_SCHEMA = z
+  .array(VAR_ENTRY_SCHEMA)
+  .transform((vars) =>
+    vars.flatMap<VarEntry>((entry) => (typeof entry === 'string' ? [[entry, undefined]] : Object.entries(entry))),
+  )
+  .refine((entries) => new Set(entries.map(([name]) => name)).size === entries.length, {
+    message: 'Variable names must be unique.',
+  });
 
-export const VARS_SCHEMA = z.array(VAR_ENTRY_SCHEMA).refine(
-  (vars) => {
-    const names = getVarEntries(vars).map(([name]) => name);
-    return new Set(names).size === names.length;
-  },
-  { message: 'Variable names must be unique.' },
-);
-
-function parseVarsInput(vars: unknown) {
+export function parseVarEntries(vars: unknown) {
   const result = VARS_SCHEMA.safeParse(vars);
   if (!result.success) {
     throw new PortoError('mappingInvalid', result.error.issues.map((issue) => issue.message).join('; '), {
@@ -42,16 +38,13 @@ function parseVarsInput(vars: unknown) {
   return result.data;
 }
 
-export function validateVars(vars: Vars, size: number) {
-  const parsedVars = parseVarsInput(vars);
-  if (getVarEntries(parsedVars).length > size) {
+export function assertVarsFit(varsCount: number, size: number) {
+  if (varsCount > size) {
     throw new PortoError('mappingInvalid', 'Vars contain more entries than the block contains.');
   }
-  return parsedVars;
 }
 
-export function mapBlockToVars(block: PortBlock, vars: Vars) {
-  const entries = getVarEntries(validateVars(vars, block.end - block.start + 1));
+export function mapBlockToVars(block: PortBlock, entries: VarEntry[]) {
   const mappedEntries = entries.map<[string, number | string]>(([name, factory], idx) => {
     const port = block.getPort(idx);
     if (factory === undefined) return [name, port];
@@ -88,5 +81,5 @@ function parseVar(entry: string) {
 }
 
 export function parseVars(source: string) {
-  return parseVarsInput(source.split(';').map((entry) => parseVar(entry)));
+  return parseVarEntries(source.split(';').map((entry) => parseVar(entry)));
 }

@@ -19,8 +19,6 @@ env:
   GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   RELEASE_IT_PUSH_REPO: git@github.com:${{ github.repository }}.git
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
   PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: false
 
 jobs:
@@ -56,11 +54,20 @@ jobs:
           git config user.email "$GIT_USER_EMAIL"
 
       - name: Release
+        id: release
         run: pnpm release
 
       - name: Notify release succeeded
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: pnpm ga:notify success "[@b12k/porto] Release succeeded."
 
       - name: Notify release failed
-        if: failure()
+        if: failure() && steps.release.outcome != 'success'
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: pnpm ga:notify error "[@b12k/porto] Release failed."

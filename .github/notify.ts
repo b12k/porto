@@ -13,10 +13,15 @@ if (!checkIsLevel(level)) {
 }
 const message = messageParts.join(' ');
 const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
-const icon = iconByLevel[level];
-const query = new URLSearchParams({ chat_id: TELEGRAM_CHAT_ID ?? '', text: `${icon} ${message}` });
-const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?${query.toString()}`;
-
-const response = await fetch(url, { method: 'POST' });
-
-if (!response.ok) throw new Error(await response.text());
+if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  process.stdout.write('::warning::Telegram notification skipped because its secrets are missing.\n');
+} else {
+  const query = new URLSearchParams({ chat_id: TELEGRAM_CHAT_ID, text: `${iconByLevel[level]} ${message}` });
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?${query.toString()}`;
+  try {
+    const response = await fetch(url, { method: 'POST' });
+    if (!response.ok) process.stdout.write(`::warning::Telegram notification failed with HTTP ${response.status}.\n`);
+  } catch {
+    process.stdout.write('::warning::Telegram notification request failed.\n');
+  }
+}

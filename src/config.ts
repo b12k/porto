@@ -5,21 +5,20 @@ import { z } from 'zod';
 import packageJson from '../package.json' with { type: 'json' };
 import { PortoError } from './error';
 import { checkIsFileMissing } from './files';
-import { fetchGitContext } from './git';
 import { loadConfigFile } from './load-config';
-import { OPTIONS_SCHEMA, parseOptions } from './schemas';
-import { validateVars, VARS_SCHEMA } from './vars';
+import { HOOKS_SCHEMA, OPTIONS_SCHEMA, parseOptions } from './schemas';
+import { VARS_SCHEMA } from './vars';
 
-export const DEFAULT_FILES = { envFile: '.env', write: 'porto.lock' } as const;
+export const DEFAULT_ENV_FILE = '.env';
 const CONFIG_FILES = ['porto.config.ts', 'porto.config.js'];
-const FILE_SCHEMA = z.union([z.boolean(), z.string().min(1)]);
 const CONFIG_SCHEMA = z
   .strictObject({
     ...OPTIONS_SCHEMA.shape,
-    envFile: FILE_SCHEMA,
-    json: z.boolean(),
+    ...HOOKS_SCHEMA.shape,
+    env: z.boolean(),
+    envFile: z.string().min(1),
+    jsonFile: z.union([z.literal(false), z.string().min(1)]),
     vars: VARS_SCHEMA,
-    write: FILE_SCHEMA,
   })
   .partial();
 
@@ -65,22 +64,20 @@ export function parseConfig(config: unknown) {
     const details = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
     throw new PortoError('configInvalid', details, { cause: result.error });
   }
-  return result.data;
+  const settings = result.data;
+  return { ...settings, ...(settings.envFile !== undefined && settings.env === undefined ? { env: true } : {}) };
 }
 
-function resolveConfigPaths(config: PortoConfig, filePath: string) {
+function resolveConfigPaths(config: ReturnType<typeof parseConfig>, filePath: string) {
   const directoryPath = path.dirname(filePath);
-  for (const key of ['envFile', 'write'] as const) {
+  for (const key of ['envFile', 'jsonFile'] as const) {
     const configuredPath = config[key];
-    if (configuredPath === true || typeof configuredPath === 'string') {
-      config[key] = path.resolve(directoryPath, configuredPath === true ? DEFAULT_FILES[key] : configuredPath);
-    }
+    if (typeof configuredPath === 'string') config[key] = path.resolve(directoryPath, configuredPath);
   }
   return config;
 }
 
-export async function fetchConfig() {
-  const { worktree } = await fetchGitContext();
+export async function fetchConfig(worktree: string) {
   const candidates = getConfigPaths(await realpath(process.cwd()), worktree);
   const filePath = await fetchConfigPath(candidates);
   if (!filePath) return parseConfig({});
@@ -94,9 +91,12 @@ export async function fetchConfig() {
   }
 }
 
-export function parseReserveConfig(config: unknown) {
-  const settings = parseConfig(config);
-  const options = parseOptions(settings);
-  if (settings.vars !== undefined) validateVars(settings.vars, options.size);
-  return { ...settings, ...options };
+export function applyReserveDefaults(settings: ReturnType<typeof parseConfig>) {
+  return {
+    ...settings,
+    ...parseOptions(settings),
+    env: settings.env ?? false,
+    envFile: settings.envFile ?? DEFAULT_ENV_FILE,
+    jsonFile: settings.jsonFile ?? false,
+  };
 }

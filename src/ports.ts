@@ -18,15 +18,16 @@ export function buildBlock(record: { index: number; size: number; start: number 
   };
 }
 
-async function checkIsAddressAvailable(port: number, host: string) {
+async function checkIsAddressAvailable(port: number, host: string, isAutomatic: boolean) {
   // Node's TCP listen/close API uses callbacks.
   // oxlint-disable-next-line promise/avoid-new
   return new Promise<boolean>((resolve, reject) => {
     const server = createServer();
     server.once('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'EADDRINUSE' || error.code === 'EACCES') resolve(false);
-      else if (host.includes(':') && (error.code === 'EAFNOSUPPORT' || error.code === 'EADDRNOTAVAIL')) resolve(true);
-      else reject(error);
+      else if (isAutomatic && host.includes(':') && (error.code === 'EAFNOSUPPORT' || error.code === 'EADDRNOTAVAIL')) {
+        resolve(true);
+      } else reject(error);
     });
     server.listen({ exclusive: true, host, ipv6Only: true, port }, () => {
       // oxlint-disable-next-line promise/prefer-await-to-callbacks
@@ -50,19 +51,29 @@ function getProbeHosts() {
   return new Set(['0.0.0.0', '127.0.0.1', '::', '::1', ...interfaceHosts]);
 }
 
-export async function listBusyPorts(start: number, end: number) {
+export async function listBusyPorts(
+  start: number,
+  end: number,
+  { host, limit = Number.POSITIVE_INFINITY }: { host?: string | undefined; limit?: number } = {},
+) {
   const busyPorts: number[] = [];
-  const hosts = getProbeHosts();
+  const hosts = host === undefined ? getProbeHosts() : [host];
   for (let port = start; port <= end; port += 1) {
     // Windows can bind wildcard sockets alongside listeners on a specific interface.
-    for (const host of hosts) {
+    for (const probeHost of hosts) {
       // These probes must not collide with sockets opened by another probe.
       // oxlint-disable-next-line no-await-in-loop
-      if (!(await checkIsAddressAvailable(port, host))) {
+      if (!(await checkIsAddressAvailable(port, probeHost, host === undefined))) {
         busyPorts.push(port);
+        if (busyPorts.length === limit) return busyPorts;
         break;
       }
     }
   }
   return busyPorts;
+}
+
+export async function checkHasBusyPort(start: number, end: number, host?: string) {
+  const busyPorts = await listBusyPorts(start, end, { host, limit: 1 });
+  return busyPorts.length > 0;
 }
