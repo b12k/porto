@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./porto.png" alt="Porto banner with a tree formed from Ethernet cables" />
+</p>
+
 # ⚓ Porto
 
 Porto reserves TCP port blocks for Git checkouts and worktrees.
