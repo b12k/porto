@@ -13,6 +13,7 @@ import { logError } from './log';
 import {
   fetchExportPaths,
   formatReserveOutput,
+  formatStatsTable,
   formatTable,
   updateEnvironmentFile,
   writeReserveJsonFile,
@@ -35,10 +36,6 @@ async function fetchSettings(flags: ReserveFlags, command: Command, worktree: st
   return { ...applyReserveDefaults({ ...configured, ...explicit, vars: entries }), json: json ?? false };
 }
 
-function writeOutput(contents: string) {
-  process.stdout.write(`${contents}\n`);
-}
-
 async function runHook(hookName: string, hook: () => Promise<void> | void) {
   try {
     await hook();
@@ -47,6 +44,10 @@ async function runHook(hookName: string, hook: () => Promise<void> | void) {
       cause: error,
     });
   }
+}
+
+function writeOutput(contents: string) {
+  process.stdout.write(`${contents}\n`);
 }
 
 async function handleReserve(flags: ReserveFlags, command: Command) {
@@ -62,7 +63,7 @@ async function handleReserve(flags: ReserveFlags, command: Command) {
   if (environmentPath) {
     await updateEnvironmentFile(environmentPath, environment ?? { PORTO_BLOCK: block.index }, git.commonDirectory);
   }
-  await runHook('onReserved', async () => settings.onReserved?.(block, ports));
+  await runHook('onReserved', () => settings.onReserved?.(block, ports));
   writeOutput(output);
 }
 
@@ -112,22 +113,7 @@ cli
   .option('--json', 'Print JSON to stdout')
   .action(async (flags: ReserveFlags) => {
     const reservations = await stats();
-    writeOutput(
-      flags.json
-        ? JSON.stringify(reservations)
-        : formatTable(
-            ['BLOCK', 'PORTS', 'WORKTREE', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
-            reservations.map((record) => [
-              String(record.index),
-              `${record.start}-${record.end}`,
-              record.worktree,
-              record.lastUsedAt,
-              String(record.idleTtlMinutes),
-              record.keep ? 'yes' : 'no',
-              record.isExpired ? 'yes' : 'no',
-            ]),
-          ),
-    );
+    writeOutput(flags.json ? JSON.stringify(reservations) : formatStatsTable(reservations));
   });
 
 cli
@@ -138,7 +124,7 @@ cli
     const { onReleased } = await fetchConfig(worktree);
     const blocks = await release();
     const results = await Promise.allSettled(
-      blocks.map(async ({ ports, ...block }) => runHook('onReleased', async () => onReleased?.(block, ports))),
+      blocks.map(({ ports, ...block }) => runHook('onReleased', () => onReleased?.(block, ports))),
     );
     const failure = results.find((result) => result.status === 'rejected');
     if (failure) throw failure.reason;

@@ -10,14 +10,18 @@ import { PortoError } from './error';
 import { checkIsFileMissing, writeFileAtomically } from './files';
 import { REGISTRY_SCHEMA } from './schemas';
 
-export type ReservationRecord = SetRequired<Omit<ReserveOptions, 'vars'>, 'idleTtlMinutes' | 'size' | 'start'> & {
+type ReservationRecord = SetRequired<Omit<ReserveOptions, 'vars'>, 'idleTtlMinutes' | 'size' | 'start'> & {
   index: number;
   keep: boolean;
   lastUsedAt: string;
-  ports: number[];
+  ports: Array<number>;
   worktree: string;
   worktreeId: string;
 };
+
+function getRegistryPath(commonDirectory: string) {
+  return path.join(commonDirectory, 'porto-registry.json');
+}
 
 async function listReservations(filePath: string) {
   try {
@@ -28,20 +32,16 @@ async function listReservations(filePath: string) {
   }
 }
 
-async function writeReservations(filePath: string, records: ReservationRecord[], previousContents: string) {
+async function writeReservations(filePath: string, records: Array<ReservationRecord>, previousContents: string) {
   const contents = JSON.stringify(records);
   if (contents !== previousContents) {
     await writeFileAtomically(filePath, `${contents}\n`);
   }
 }
 
-export function getRegistryPath(commonDirectory: string) {
-  return path.join(commonDirectory, 'porto-registry.json');
-}
-
-export async function updateRegistry<Result>(
+async function updateRegistry<Result>(
   commonDirectory: string,
-  handleRecords: (records: ReservationRecord[]) => Promise<Result> | Result,
+  handleRecords: (records: Array<ReservationRecord>) => Promise<Result> | Result,
 ) {
   const filePath = getRegistryPath(commonDirectory);
   const unlock = await lockfile.lock(filePath, {
@@ -58,3 +58,6 @@ export async function updateRegistry<Result>(
     await unlock();
   }
 }
+
+export { getRegistryPath, updateRegistry };
+export type { ReservationRecord };
