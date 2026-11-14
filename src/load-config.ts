@@ -1,7 +1,7 @@
 import { cosmiconfig } from 'cosmiconfig';
 import { createJiti } from 'jiti';
 
-async function loadTypeScriptConfig(filePath: string) {
+function loadTypeScriptConfig(filePath: string) {
   return createJiti(import.meta.url).import(filePath, { default: true });
 }
 

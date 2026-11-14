@@ -1,7 +1,12 @@
-import { configs as perfectionistConfigs } from 'eslint-plugin-perfectionist';
-import { defineConfig } from 'oxlint';
+import type { OxlintConfig } from 'oxlint';
 
-export default defineConfig({
+import { configs } from 'eslint-plugin-perfectionist';
+
+const MAX_FUNCTION_LINES = 150;
+const MAX_STATEMENTS = 50;
+const MAX_PARAMETERS = 4;
+
+export default {
   categories: {
     correctness: 'error',
     nursery: 'error',
@@ -12,75 +17,65 @@ export default defineConfig({
     suspicious: 'error',
   },
   env: { node: true },
+  ignorePatterns: ['dist', 'node_modules'],
   jsPlugins: ['eslint-plugin-perfectionist'],
-  options: { reportUnusedDisableDirectives: 'error', typeAware: true },
+  options: { denyWarnings: true, reportUnusedDisableDirectives: 'error', typeAware: true },
   overrides: [
     {
       files: ['**/*.config.ts', '.release-it.ts'],
       rules: { 'import/no-anonymous-default-export': 'off', 'import/no-default-export': 'off' },
     },
   ],
-  plugins: ['import', 'node', 'oxc', 'promise', 'typescript', 'unicorn'],
+  plugins: ['typescript', 'oxc', 'import', 'node', 'promise', 'unicorn'],
   rules: {
-    ...perfectionistConfigs['recommended-natural'].rules,
+    ...configs['recommended-natural'].rules,
     curly: ['error', 'multi-line'],
-    'func-style': ['error', 'declaration', { allowArrowFunctions: false }],
-    'import/exports-last': 'off',
-    'import/group-exports': 'off',
+    'func-style': ['error', 'declaration'],
+    'id-length': ['error', { exceptions: ['_', 'z', 'T'] }],
     'import/no-named-export': 'off',
     'import/no-nodejs-modules': 'off',
     'import/no-relative-parent-imports': 'off',
     'import/prefer-default-export': 'off',
     'init-declarations': 'off',
-    'no-array-constructor': 'off',
-    'no-duplicate-imports': 'off',
-    'no-implied-eval': 'off',
-    'no-inline-comments': 'off',
-    'no-lonely-if': 'off',
+    'max-lines-per-function': ['error', { max: MAX_FUNCTION_LINES, skipBlankLines: true, skipComments: true }],
+    'max-params': ['error', MAX_PARAMETERS],
+    'max-statements': ['error', MAX_STATEMENTS],
+    'no-duplicate-imports': ['error', { allowSeparateTypeImports: true }],
     'no-magic-numbers': 'off',
     'no-negated-condition': 'off',
     'no-nested-ternary': 'off',
     'no-ternary': 'off',
-    'no-throw-literal': 'off',
     'no-undefined': 'off',
     'no-use-before-define': ['error', { functions: true }],
     'node/no-process-env': 'off',
     'node/no-top-level-await': 'off',
     'one-var': ['error', 'never'],
     'oxc/no-async-await': 'off',
+    'oxc/no-barrel-file': 'off',
     'oxc/no-optional-chaining': 'off',
     'oxc/no-rest-spread-properties': 'off',
     'perfectionist/sort-modules': [
       'error',
       {
-        groups: [
-          'declare-enum',
-          'export-enum',
-          'enum',
-          ['declare-interface', 'declare-type'],
-          ['export-interface', 'export-type'],
-          ['interface', 'type'],
-          'declare-class',
-          'class',
-          'export-class',
-          { group: 'function', type: 'usage' },
+        customGroups: [
+          { fallbackSort: { type: 'natural' }, groupName: 'function', selector: 'function', type: 'usage' },
         ],
         type: 'natural',
       },
     ],
-    'prefer-destructuring': 'off',
-    'prefer-promise-reject-errors': 'off',
-    'prefer-spread': 'off',
-    'require-await': 'off',
+    'promise/prefer-await-to-callbacks': 'off',
+    'promise/prefer-await-to-then': 'off',
     'sort-imports': 'off',
     'sort-keys': 'off',
+    'sort-vars': 'off',
+    'typescript/array-type': ['error', { default: 'generic' }],
     'typescript/explicit-function-return-type': 'off',
     'typescript/explicit-module-boundary-types': 'off',
-    'typescript/prefer-find': 'off',
-    'typescript/prefer-includes': 'off',
+    'typescript/no-confusing-void-expression': ['error', { ignoreArrowShorthand: true }],
+    'typescript/no-unnecessary-condition': ['error', { checkTypePredicates: true }],
     'typescript/prefer-readonly-parameter-types': 'off',
-    'typescript/prefer-regexp-exec': 'off',
-    'typescript/prefer-string-starts-ends-with': 'off',
+    'typescript/promise-function-async': 'off',
     'typescript/strict-boolean-expressions': 'off',
+    'typescript/strict-void-return': 'off',
   },
-});
+} satisfies OxlintConfig;

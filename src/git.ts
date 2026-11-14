@@ -6,20 +6,13 @@ import { promisify } from 'node:util';
 import { PortoError } from './error';
 import { checkIsFileMissing } from './files';
 
-// oxlint-disable-next-line typescript/strict-void-return
 const execFileAsync = promisify(execFile);
 
 function getWorktreeId(commonDirectory: string, gitDirectory: string) {
   return path.relative(commonDirectory, gitDirectory).split(path.sep).join('/') || '.';
 }
 
-async function fetchLinkedWorktreeId(commonDirectory: string, worktree: string) {
-  const gitLink = await readFile(path.join(worktree, '.git'), 'utf8');
-  const gitPath = /^gitdir: (?<gitPath>.+)\r?\n?$/u.exec(gitLink)?.groups?.['gitPath'];
-  return gitPath && getWorktreeId(commonDirectory, await realpath(path.resolve(worktree, gitPath)));
-}
-
-export async function fetchGitContext() {
+async function fetchGitContext() {
   try {
     const { stdout } = await execFileAsync('git', [
       'rev-parse',
@@ -42,7 +35,13 @@ export async function fetchGitContext() {
   }
 }
 
-export async function listWorktreePaths(commonDirectory: string) {
+async function fetchLinkedWorktreeId(commonDirectory: string, worktree: string) {
+  const gitLink = await readFile(path.join(worktree, '.git'), 'utf8');
+  const gitPath = /^gitdir: (?<gitPath>.+)\r?\n?$/u.exec(gitLink)?.groups?.['gitPath'];
+  return gitPath && getWorktreeId(commonDirectory, await realpath(path.resolve(worktree, gitPath)));
+}
+
+async function listWorktreePaths(commonDirectory: string) {
   const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain', '-z']);
   const worktreePathsById = new Map<string, string>();
   await Promise.all(
@@ -62,3 +61,5 @@ export async function listWorktreePaths(commonDirectory: string) {
   );
   return worktreePathsById;
 }
+
+export { fetchGitContext, listWorktreePaths };

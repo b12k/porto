@@ -10,14 +10,13 @@ import { promisify } from 'node:util';
 
 import { fetchFreeRange } from './fixture';
 
-// oxlint-disable-next-line typescript/strict-void-return
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 const tsxPath = import.meta.resolve('tsx');
 let directoryPath: string;
 let repositoryPath: string;
 let start: number;
-const servers: ReturnType<typeof createServer>[] = [];
+const servers: Array<ReturnType<typeof createServer>> = [];
 
 async function closeListener(server: ReturnType<typeof createServer>) {
   if (!server.listening) return;
@@ -36,7 +35,7 @@ async function createListener(port = 0, host = '127.0.0.1') {
   return { port: address.port, server };
 }
 
-async function runGit(args: string[], cwd = repositoryPath) {
+function runGit(args: Array<string>, cwd = repositoryPath) {
   return execFileAsync('git', args, { cwd });
 }
 
@@ -55,15 +54,15 @@ async function expireRecords() {
   );
 }
 
-function reserveArgs(...args: string[]) {
+function reserveArgs(...args: Array<string>) {
   return ['reserve', '--start', String(start), '--size', '2', ...args];
 }
 
-async function runCli(args: string[], cwd = repositoryPath) {
+function runCli(args: Array<string>, cwd = repositoryPath) {
   return execFileAsync(process.execPath, ['--import', tsxPath, '--', cliPath, ...args], { cwd });
 }
 
-async function runCliOutput(args: string[], cwd = repositoryPath) {
+async function runCliOutput(args: Array<string>, cwd = repositoryPath) {
   const { stdout } = await runCli(args, cwd);
   return stdout;
 }
@@ -87,7 +86,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map(async (server) => closeListener(server)));
+  await Promise.all(servers.splice(0).map((server) => closeListener(server)));
   const resolvedPath = path.resolve(directoryPath);
   if (path.dirname(resolvedPath) !== path.resolve(tmpdir()) || !path.basename(resolvedPath).startsWith('porto-test-')) {
     throw new Error('Refusing to remove a directory outside the test fixture.');

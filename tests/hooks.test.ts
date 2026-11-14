@@ -10,13 +10,12 @@ import { promisify } from 'node:util';
 
 import { fetchFreeRange } from './fixture';
 
-// oxlint-disable-next-line typescript/strict-void-return
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 const apiUrl = new URL('../src/index.ts', import.meta.url).href;
 const tsxPath = import.meta.resolve('tsx');
 const BROKEN_VARS = "vars: ['API_PORT', { BAD_PORT() { throw new Error('broken factory'); } }]";
-const servers: ReturnType<typeof createServer>[] = [];
+const servers: Array<ReturnType<typeof createServer>> = [];
 let directoryPath: string;
 let start: number;
 
@@ -25,20 +24,6 @@ async function closeListener(server: ReturnType<typeof createServer>) {
   const closed = once(server, 'close');
   server.close();
   await closed;
-}
-
-async function runCli(args: string[], cwd = directoryPath) {
-  return execFileAsync(process.execPath, ['--import', tsxPath, '--', cliPath, ...args], { cwd });
-}
-
-async function writeConfig(properties: string, configStart = start) {
-  await writeFile(
-    path.join(directoryPath, 'porto.config.ts'),
-    `import { current, defineConfig } from ${JSON.stringify(apiUrl)};
-     import { appendFile, readFile } from 'node:fs/promises';
-     import { writeFileSync } from 'node:fs';
-     export default defineConfig({ start: ${configStart}, size: 2, ${properties} });`,
-  );
 }
 
 async function createWorktree() {
@@ -52,6 +37,20 @@ async function createWorktree() {
   return worktreePath;
 }
 
+function runCli(args: Array<string>, cwd = directoryPath) {
+  return execFileAsync(process.execPath, ['--import', tsxPath, '--', cliPath, ...args], { cwd });
+}
+
+async function writeConfig(properties: string, configStart = start) {
+  await writeFile(
+    path.join(directoryPath, 'porto.config.ts'),
+    `import { current, defineConfig } from ${JSON.stringify(apiUrl)};
+     import { appendFile, readFile } from 'node:fs/promises';
+     import { writeFileSync } from 'node:fs';
+     export default defineConfig({ start: ${configStart}, size: 2, ${properties} });`,
+  );
+}
+
 beforeEach(async () => {
   directoryPath = await mkdtemp(path.join(tmpdir(), 'porto-hooks-'));
   await execFileAsync('git', ['init', '-q'], { cwd: directoryPath });
@@ -59,7 +58,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map(async (server) => closeListener(server)));
+  await Promise.all(servers.splice(0).map((server) => closeListener(server)));
   const targetPath = path.resolve(directoryPath);
   if (path.dirname(targetPath) !== path.resolve(tmpdir()) || !path.basename(targetPath).startsWith('porto-hooks-')) {
     throw new Error('Refusing to remove a directory outside the test fixture.');

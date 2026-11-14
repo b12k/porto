@@ -36,10 +36,6 @@ async function fetchSettings(flags: ReserveFlags, command: Command, worktree: st
   return { ...applyReserveDefaults({ ...configured, ...explicit, vars: entries }), json: json ?? false };
 }
 
-function writeOutput(contents: string) {
-  process.stdout.write(`${contents}\n`);
-}
-
 async function runHook(hookName: string, hook: () => Promise<void> | void) {
   try {
     await hook();
@@ -48,6 +44,10 @@ async function runHook(hookName: string, hook: () => Promise<void> | void) {
       cause: error,
     });
   }
+}
+
+function writeOutput(contents: string) {
+  process.stdout.write(`${contents}\n`);
 }
 
 async function handleReserve(flags: ReserveFlags, command: Command) {
@@ -63,7 +63,7 @@ async function handleReserve(flags: ReserveFlags, command: Command) {
   if (environmentPath) {
     await updateEnvironmentFile(environmentPath, environment ?? { PORTO_BLOCK: block.index }, git.commonDirectory);
   }
-  await runHook('onReserved', async () => settings.onReserved?.(block, ports));
+  await runHook('onReserved', () => settings.onReserved?.(block, ports));
   writeOutput(output);
 }
 
@@ -124,7 +124,7 @@ cli
     const { onReleased } = await fetchConfig(worktree);
     const blocks = await release();
     const results = await Promise.allSettled(
-      blocks.map(async ({ ports, ...block }) => runHook('onReleased', async () => onReleased?.(block, ports))),
+      blocks.map(({ ports, ...block }) => runHook('onReleased', () => onReleased?.(block, ports))),
     );
     const failure = results.find((result) => result.status === 'rejected');
     if (failure) throw failure.reason;

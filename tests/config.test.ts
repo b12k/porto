@@ -8,7 +8,6 @@ import { promisify } from 'node:util';
 
 import { fetchFreeRange } from './fixture';
 
-// oxlint-disable-next-line typescript/strict-void-return
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 const packageUrl = new URL('../src/index.ts', import.meta.url).href;
@@ -17,16 +16,16 @@ let directoryPath: string;
 let repositoryPath: string;
 let start: number;
 
-async function runCli(args: string[], cwd = repositoryPath) {
+function runCli(args: Array<string>, cwd = repositoryPath) {
   return execFileAsync(process.execPath, ['--import', tsxPath, '--', cliPath, ...args], { cwd });
 }
 
-async function runCliOutput(args: string[], cwd = repositoryPath) {
+async function runCliOutput(args: Array<string>, cwd = repositoryPath) {
   const { stdout } = await runCli(args, cwd);
   return stdout;
 }
 
-async function runGit(args: string[]) {
+function runGit(args: Array<string>) {
   return execFileAsync('git', args, { cwd: repositoryPath });
 }
 

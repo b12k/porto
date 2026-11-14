@@ -5,13 +5,13 @@ import type { PortBlock } from './index';
 
 import { PortoError } from './error';
 
-const BLOCK_HOOK_SCHEMA = z.custom<(block: PortBlock, ports: number[]) => Promise<void> | void>(
+const BLOCK_HOOK_SCHEMA = z.custom<(block: PortBlock, ports: Array<number>) => Promise<void> | void>(
   (hook) => typeof hook === 'function',
 );
 
-export const HOOKS_SCHEMA = z.object({ onReleased: BLOCK_HOOK_SCHEMA, onReserved: BLOCK_HOOK_SCHEMA });
+const HOOKS_SCHEMA = z.object({ onReleased: BLOCK_HOOK_SCHEMA, onReserved: BLOCK_HOOK_SCHEMA });
 
-export const OPTIONS_SCHEMA = z
+const OPTIONS_SCHEMA = z
   .object({
     host: z.string().trim().min(1).optional(),
     idleTtlMinutes: z.number().positive(),
@@ -56,7 +56,7 @@ const RECORD_SCHEMA = OPTIONS_SCHEMA.safeExtend({
     { message: 'Assigned ports must belong to the block.', path: ['ports'] },
   );
 
-export const REGISTRY_SCHEMA = z
+const REGISTRY_SCHEMA = z
   .array(RECORD_SCHEMA)
   .refine(
     (records) =>
@@ -81,7 +81,7 @@ export const REGISTRY_SCHEMA = z
     { message: 'Reserved port blocks must not overlap.' },
   );
 
-export function parseOptions(options: unknown) {
+function parseOptions(options: unknown) {
   const result = INPUT_OPTIONS_SCHEMA.safeParse(options);
   if (!result.success) {
     const details = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
@@ -89,3 +89,5 @@ export function parseOptions(options: unknown) {
   }
   return result.data;
 }
+
+export { HOOKS_SCHEMA, OPTIONS_SCHEMA, parseOptions, REGISTRY_SCHEMA };

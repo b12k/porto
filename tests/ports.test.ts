@@ -14,7 +14,7 @@ const ipv6Host =
   ipv6Interface?.family === 'IPv6'
     ? `${ipv6Interface.address}%${process.platform === 'win32' ? ipv6Interface.scopeid : ipv6Interface.name}`
     : undefined;
-const servers: ReturnType<typeof createServer>[] = [];
+const servers: Array<ReturnType<typeof createServer>> = [];
 
 async function closeListener(server: ReturnType<typeof createServer>) {
   if (!server.listening) return;
@@ -34,7 +34,7 @@ async function createListener(host: string) {
 }
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map(async (server) => closeListener(server)));
+  await Promise.all(servers.splice(0).map((server) => closeListener(server)));
 });
 
 it.skipIf(!ipv4Host)('detects a busy port bound to a local IPv4 interface', async () => {

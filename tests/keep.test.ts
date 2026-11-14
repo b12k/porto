@@ -10,14 +10,17 @@ import { promisify } from 'node:util';
 import { parseOptions } from '../src/schemas';
 import { fetchFreeRange } from './fixture';
 
-// oxlint-disable-next-line typescript/strict-void-return
 const execFileAsync = promisify(execFile);
 const apiUrl = new URL('../src/index.ts', import.meta.url).href;
 const tsxUrl = import.meta.resolve('tsx');
-const servers: ReturnType<typeof createServer>[] = [];
+const servers: Array<ReturnType<typeof createServer>> = [];
 let directoryPath: string;
 let repositoryPath: string;
 let start: number;
+
+function buildReserveSource(keep?: boolean) {
+  return `await reserve(${JSON.stringify({ keep, size: 1, start })});`;
+}
 
 async function closeListener(server: ReturnType<typeof createServer>) {
   if (!server.listening) return;
@@ -36,7 +39,20 @@ async function createListener(port = 0, host = '127.0.0.1') {
   return { port: address.port, server };
 }
 
-async function runGit(args: string[], cwd = repositoryPath) {
+function getRegistryPath() {
+  return path.join(repositoryPath, '.git', 'porto-registry.json');
+}
+
+async function expireRecords() {
+  const registryPath = getRegistryPath();
+  const contents = await readFile(registryPath, 'utf8');
+  await writeFile(
+    registryPath,
+    contents.replaceAll(/"lastUsedAt"\s*:\s*"[^"]+"/gu, '"lastUsedAt":"2000-01-01T00:00:00.000Z"'),
+  );
+}
+
+function runGit(args: Array<string>, cwd = repositoryPath) {
   return execFileAsync('git', args, { cwd });
 }
 
@@ -52,23 +68,6 @@ async function runApi(source: string, cwd = repositoryPath) {
     cwd,
   });
   return stdout;
-}
-
-function getRegistryPath() {
-  return path.join(repositoryPath, '.git', 'porto-registry.json');
-}
-
-async function expireRecords() {
-  const registryPath = getRegistryPath();
-  const contents = await readFile(registryPath, 'utf8');
-  await writeFile(
-    registryPath,
-    contents.replaceAll(/"lastUsedAt"\s*:\s*"[^"]+"/gu, '"lastUsedAt":"2000-01-01T00:00:00.000Z"'),
-  );
-}
-
-function buildReserveSource(keep?: boolean) {
-  return `await reserve(${JSON.stringify({ keep, size: 1, start })});`;
 }
 
 beforeEach(async () => {
@@ -90,7 +89,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map(async (server) => closeListener(server)));
+  await Promise.all(servers.splice(0).map((server) => closeListener(server)));
   const targetPath = path.resolve(directoryPath);
   if (path.dirname(targetPath) !== path.resolve(tmpdir()) || !path.basename(targetPath).startsWith('porto-keep-')) {
     throw new Error('Refusing to remove a directory outside the test fixture.');

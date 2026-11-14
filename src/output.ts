@@ -9,16 +9,11 @@ import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
 import { getRegistryPath } from './registry';
 
-export type Environment = Record<string, number | string>;
+type Environment = Record<string, number | string>;
 
 // Match unrelated names too so their quoted values are skipped as a unit.
 const ENV_ASSIGNMENT_PATTERN =
   /^(?<prefix>\uFEFF?[ \t]*(?:export[ \t]+)?)(?<name>[^#=\s][^=\r\n]*?)(?<separator>[ \t]*=[ \t]*)(?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|`[^`]*`|[^\r\n#]*?)(?<suffix>[ \t]*(?:#[^\r\n]*)?)(?=\r?$)/gmu;
-
-function normalizePathForComparison(filePath: string) {
-  if (process.platform === 'win32') return filePath.replace(/[ .]+$/u, '').toLowerCase();
-  return process.platform === 'darwin' ? filePath.toLowerCase() : filePath;
-}
 
 async function fetchFileIdentity(filePath: string) {
   try {
@@ -30,7 +25,12 @@ async function fetchFileIdentity(filePath: string) {
   }
 }
 
-async function assertExportPaths(exportPaths: string[], registryPath: string) {
+function normalizePathForComparison(filePath: string) {
+  if (process.platform === 'win32') return filePath.replace(/[ .]+$/u, '').toLowerCase();
+  return process.platform === 'darwin' ? filePath.toLowerCase() : filePath;
+}
+
+async function assertExportPaths(exportPaths: Array<string>, registryPath: string) {
   if (exportPaths.length === 0) return;
   const lockPath = `${registryPath}.lock`;
   const [registryTarget, lockTarget] = await Promise.all([
@@ -43,7 +43,7 @@ async function assertExportPaths(exportPaths: string[], registryPath: string) {
     await Promise.all([fetchFileIdentity(registryTarget), fetchFileIdentity(lockTarget)]),
   );
   protectedIdentities.delete(false);
-  const exportIdentities = await Promise.all(exportPaths.map(async (filePath) => fetchFileIdentity(filePath)));
+  const exportIdentities = await Promise.all(exportPaths.map((filePath) => fetchFileIdentity(filePath)));
   if (
     exportPaths.some((filePath) => {
       const normalizedPath = normalizePathForComparison(filePath);
@@ -60,7 +60,16 @@ async function assertExportPaths(exportPaths: string[], registryPath: string) {
   }
 }
 
-export async function fetchExportPaths(
+async function fetchEnvironmentContents(filePath: string) {
+  try {
+    return await readFile(filePath, 'utf8');
+  } catch (error) {
+    if (!checkIsFileMissing(error)) throw error;
+    return '';
+  }
+}
+
+async function fetchExportPaths(
   settings: { env: boolean; envFile: string; jsonFile: false | string },
   commonDirectory: string,
 ) {
@@ -86,22 +95,18 @@ function formatEnvironmentValue(entry: number | string) {
   throw new PortoError('mappingInvalid', 'Value cannot be represented safely on a single env line.');
 }
 
-export function formatEnvironment(environment: Environment) {
+function formatEnvironment(environment: Environment) {
   return Object.entries(environment)
     .map(([name, entry]) => `${name}=${formatEnvironmentValue(entry)}`)
     .join('\n');
 }
 
-export function formatReserveOutput(block: PortBlock, environment: Environment | undefined, isJson: boolean) {
+function formatReserveOutput(block: PortBlock, environment: Environment | undefined, isJson: boolean) {
   if (isJson) return JSON.stringify(environment ?? { end: block.end, index: block.index, start: block.start });
   return environment ? formatEnvironment(environment) : String(block.index);
 }
 
-export async function writeReserveJsonFile(filePath: string, block: PortBlock, environment: Environment | undefined) {
-  await writeFileAtomically(filePath, `${formatReserveOutput(block, environment, true)}\n`);
-}
-
-export function formatTable(headers: string[], rows: string[][]) {
+function formatTable(headers: Array<string>, rows: Array<Array<string>>) {
   const widths = headers.map((header, index) => Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)));
   return [headers, ...rows]
     .map((row) =>
@@ -113,7 +118,7 @@ export function formatTable(headers: string[], rows: string[][]) {
     .join('\n');
 }
 
-export function formatStatsTable(reservations: ReservationStats[]) {
+function formatStatsTable(reservations: Array<ReservationStats>) {
   const now = Date.now();
   return formatTable(
     ['BLOCK', 'PORTS', 'WORKTREE', 'PATH', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
@@ -130,22 +135,13 @@ export function formatStatsTable(reservations: ReservationStats[]) {
   );
 }
 
-async function fetchEnvironmentContents(filePath: string) {
-  try {
-    return await readFile(filePath, 'utf8');
-  } catch (error) {
-    if (!checkIsFileMissing(error)) throw error;
-    return '';
-  }
-}
-
 async function saveEnvironmentFile(filePath: string, environment: Environment) {
   const contents = await fetchEnvironmentContents(filePath);
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
   const pendingEntries = new Map(Object.entries(environment));
   const updated = contents.replaceAll(
     ENV_ASSIGNMENT_PATTERN,
-    (line: string, ...captures: [string, string, string, string, ...unknown[]]) => {
+    (line: string, ...captures: [string, string, string, string, ...Array<unknown>]) => {
       const [prefix, name, separator, suffix] = captures;
       const entry = Object.hasOwn(environment, name) ? environment[name] : undefined;
       if (entry === undefined) return line;
@@ -158,7 +154,7 @@ async function saveEnvironmentFile(filePath: string, environment: Environment) {
   await writeFileAtomically(filePath, `${updated}${appended ? `${separator}${appended}${lineEnding}` : ''}`);
 }
 
-export async function updateEnvironmentFile(filePath: string, environment: Environment, commonDirectory?: string) {
+async function updateEnvironmentFile(filePath: string, environment: Environment, commonDirectory?: string) {
   const targetPath = await fetchCanonicalPath(filePath);
   if (commonDirectory !== undefined) await assertExportPaths([targetPath], getRegistryPath(commonDirectory));
   const unlock = await lockfile.lock(targetPath, {
@@ -171,3 +167,18 @@ export async function updateEnvironmentFile(filePath: string, environment: Envir
     await unlock();
   }
 }
+
+async function writeReserveJsonFile(filePath: string, block: PortBlock, environment: Environment | undefined) {
+  await writeFileAtomically(filePath, `${formatReserveOutput(block, environment, true)}\n`);
+}
+
+export {
+  fetchExportPaths,
+  formatEnvironment,
+  formatReserveOutput,
+  formatStatsTable,
+  formatTable,
+  updateEnvironmentFile,
+  writeReserveJsonFile,
+};
+export type { Environment };

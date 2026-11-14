@@ -9,7 +9,6 @@ import { promisify } from 'node:util';
 import { writeFileAtomically } from '../src/files';
 import { updateEnvironmentFile } from '../src/output';
 
-// oxlint-disable-next-line typescript/strict-void-return
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 const tsxPath = import.meta.resolve('tsx');

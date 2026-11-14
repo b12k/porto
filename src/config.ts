@@ -9,7 +9,7 @@ import { loadConfigFile } from './load-config';
 import { HOOKS_SCHEMA, OPTIONS_SCHEMA, parseOptions } from './schemas';
 import { VARS_SCHEMA } from './vars';
 
-export const DEFAULT_ENV_FILE = '.env';
+const DEFAULT_ENV_FILE = '.env';
 const CONFIG_FILES = ['porto.config.ts', 'porto.config.js'];
 const CONFIG_SCHEMA = z
   .strictObject({
@@ -22,27 +22,16 @@ const CONFIG_SCHEMA = z
   })
   .partial();
 
-export type PortoConfig = z.input<typeof CONFIG_SCHEMA>;
+type PortoConfig = z.input<typeof CONFIG_SCHEMA>;
 
-export const libraryName = 'porto';
-export const { name, version } = packageJson;
+const libraryName = 'porto';
+const { name, version } = packageJson;
 
-export function defineConfig(config: PortoConfig) {
+function defineConfig(config: PortoConfig) {
   return config;
 }
 
-function getConfigPaths(directoryPath: string, worktreePath: string) {
-  const filePaths: string[] = [];
-  for (let currentPath = directoryPath; ; currentPath = path.dirname(currentPath)) {
-    filePaths.push(...CONFIG_FILES.map((fileName) => path.join(currentPath, fileName)));
-    if (currentPath === worktreePath) return filePaths;
-    if (path.dirname(currentPath) === currentPath) {
-      throw new PortoError('configInvalid', 'Cannot find the checkout root.');
-    }
-  }
-}
-
-async function fetchConfigPath(candidates: string[]) {
+async function fetchConfigPath(candidates: Array<string>) {
   let configPath: string | undefined;
   for (const filePath of candidates) {
     try {
@@ -58,7 +47,18 @@ async function fetchConfigPath(candidates: string[]) {
   return configPath;
 }
 
-export function parseConfig(config: unknown) {
+function getConfigPaths(directoryPath: string, worktreePath: string) {
+  const filePaths: Array<string> = [];
+  for (let currentPath = directoryPath; ; currentPath = path.dirname(currentPath)) {
+    filePaths.push(...CONFIG_FILES.map((fileName) => path.join(currentPath, fileName)));
+    if (currentPath === worktreePath) return filePaths;
+    if (path.dirname(currentPath) === currentPath) {
+      throw new PortoError('configInvalid', 'Cannot find the checkout root.');
+    }
+  }
+}
+
+function parseConfig(config: unknown) {
   const result = CONFIG_SCHEMA.safeParse(config);
   if (!result.success) {
     const details = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
@@ -66,6 +66,16 @@ export function parseConfig(config: unknown) {
   }
   const settings = result.data;
   return { ...settings, ...(settings.envFile !== undefined && settings.env === undefined ? { env: true } : {}) };
+}
+
+function applyReserveDefaults(settings: ReturnType<typeof parseConfig>) {
+  return {
+    ...settings,
+    ...parseOptions(settings),
+    env: settings.env ?? false,
+    envFile: settings.envFile ?? DEFAULT_ENV_FILE,
+    jsonFile: settings.jsonFile ?? false,
+  };
 }
 
 function resolveConfigPaths(config: ReturnType<typeof parseConfig>, filePath: string) {
@@ -77,7 +87,7 @@ function resolveConfigPaths(config: ReturnType<typeof parseConfig>, filePath: st
   return config;
 }
 
-export async function fetchConfig(worktree: string) {
+async function fetchConfig(worktree: string) {
   const candidates = getConfigPaths(await realpath(process.cwd()), worktree);
   const filePath = await fetchConfigPath(candidates);
   if (!filePath) return parseConfig({});
@@ -91,12 +101,5 @@ export async function fetchConfig(worktree: string) {
   }
 }
 
-export function applyReserveDefaults(settings: ReturnType<typeof parseConfig>) {
-  return {
-    ...settings,
-    ...parseOptions(settings),
-    env: settings.env ?? false,
-    envFile: settings.envFile ?? DEFAULT_ENV_FILE,
-    jsonFile: settings.jsonFile ?? false,
-  };
-}
+export { applyReserveDefaults, DEFAULT_ENV_FILE, defineConfig, fetchConfig, libraryName, name, parseConfig, version };
+export type { PortoConfig };

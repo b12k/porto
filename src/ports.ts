@@ -3,7 +3,7 @@ import { networkInterfaces } from 'node:os';
 
 import { PortoError } from './error';
 
-export function buildBlock(record: { index: number; size: number; start: number }) {
+function buildBlock(record: { index: number; size: number; start: number }) {
   const start = record.start + record.index * record.size;
   return {
     end: start + record.size - 1,
@@ -18,7 +18,7 @@ export function buildBlock(record: { index: number; size: number; start: number 
   };
 }
 
-async function checkIsAddressAvailable(port: number, host: string, isAutomatic: boolean) {
+function checkIsAddressAvailable(port: number, host: string, isAutomatic: boolean) {
   // Node's TCP listen/close API uses callbacks.
   // oxlint-disable-next-line promise/avoid-new
   return new Promise<boolean>((resolve, reject) => {
@@ -30,7 +30,6 @@ async function checkIsAddressAvailable(port: number, host: string, isAutomatic: 
       } else reject(error);
     });
     server.listen({ exclusive: true, host, ipv6Only: true, port }, () => {
-      // oxlint-disable-next-line promise/prefer-await-to-callbacks
       server.close((error) => {
         if (error) reject(error);
         else resolve(true);
@@ -51,12 +50,12 @@ function getProbeHosts() {
   return new Set(['0.0.0.0', '127.0.0.1', '::', '::1', ...interfaceHosts]);
 }
 
-export async function listBusyPorts(
+async function listBusyPorts(
   start: number,
   end: number,
   { host, limit = Number.POSITIVE_INFINITY }: { host?: string | undefined; limit?: number } = {},
 ) {
-  const busyPorts: number[] = [];
+  const busyPorts: Array<number> = [];
   const hosts = host === undefined ? getProbeHosts() : [host];
   for (let port = start; port <= end; port += 1) {
     // Windows can bind wildcard sockets alongside listeners on a specific interface.
@@ -73,7 +72,9 @@ export async function listBusyPorts(
   return busyPorts;
 }
 
-export async function checkHasBusyPort(start: number, end: number, host?: string) {
+async function checkHasBusyPort(start: number, end: number, host?: string) {
   const busyPorts = await listBusyPorts(start, end, { host, limit: 1 });
   return busyPorts.length > 0;
 }
+
+export { buildBlock, checkHasBusyPort, listBusyPorts };

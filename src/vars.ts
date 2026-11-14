@@ -5,9 +5,9 @@ import type { PortBlock } from './index';
 
 import { PortoError } from './error';
 
-export type VarEntry = [string, undefined | VarFactory];
-export type VarFactory = (block: number, port: number, idx: number) => string;
-export type Vars = (Record<string, VarFactory> | string)[];
+type VarEntry = [string, undefined | VarFactory];
+type VarFactory = (block: number, port: number, idx: number) => string;
+type Vars = Array<Record<string, VarFactory> | string>;
 
 const VAR_NAME_SCHEMA = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
 const VAR_TEXT_SCHEMA = z.string().regex(/^[^\r\n\0]*$/u);
@@ -19,7 +19,7 @@ const VAR_RECORD_SCHEMA = z.custom<Record<string, VarFactory>>((record) => {
 });
 const VAR_ENTRY_SCHEMA = z.union([VAR_NAME_SCHEMA, VAR_RECORD_SCHEMA]);
 
-export const VARS_SCHEMA = z
+const VARS_SCHEMA = z
   .array(VAR_ENTRY_SCHEMA)
   .transform((vars) =>
     vars.flatMap<VarEntry>((entry) => (typeof entry === 'string' ? [[entry, undefined]] : Object.entries(entry))),
@@ -28,30 +28,19 @@ export const VARS_SCHEMA = z
     message: 'Variable names must be unique.',
   });
 
-export function parseVarEntries(vars: unknown) {
-  const result = VARS_SCHEMA.safeParse(vars);
-  if (!result.success) {
-    throw new PortoError('mappingInvalid', result.error.issues.map((issue) => issue.message).join('; '), {
-      cause: result.error,
-    });
-  }
-  return result.data;
-}
-
-export function assertVarsFit(varsCount: number, size: number) {
+function assertVarsFit(varsCount: number, size: number) {
   if (varsCount > size) {
     throw new PortoError('mappingInvalid', 'Vars contain more entries than the block contains.');
   }
 }
 
-export function mapBlockToVars(block: PortBlock, entries: VarEntry[]) {
+function mapBlockToVars(block: PortBlock, entries: Array<VarEntry>) {
   const mappedEntries = entries.map<[string, number | string]>(([name, factory], idx) => {
     const port = block.getPort(idx);
     if (factory === undefined) return [name, port];
     try {
       const text: unknown = factory(block.index, port, idx);
       if (types.isPromise(text)) {
-        // oxlint-disable-next-line promise/prefer-await-to-then
         text.catch(() => {
           // Async factories are rejected below; observe their errors without awaiting them.
         });
@@ -80,6 +69,19 @@ function parseVar(entry: string) {
   };
 }
 
-export function parseVars(source: string) {
+function parseVarEntries(vars: unknown) {
+  const result = VARS_SCHEMA.safeParse(vars);
+  if (!result.success) {
+    throw new PortoError('mappingInvalid', result.error.issues.map((issue) => issue.message).join('; '), {
+      cause: result.error,
+    });
+  }
+  return result.data;
+}
+
+function parseVars(source: string) {
   return parseVarEntries(source.split(';').map((entry) => parseVar(entry)));
 }
+
+export { assertVarsFit, mapBlockToVars, parseVarEntries, parseVars, VARS_SCHEMA };
+export type { VarEntry, VarFactory, Vars };

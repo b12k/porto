@@ -1,50 +1,29 @@
 import { remove, sortBy } from 'es-toolkit';
 
+import type { ReservationRecord } from './registry';
+
 import { BusyPortsError } from './busy-ports-error';
 import { fetchGitContext, listWorktreePaths } from './git';
 import { buildBlock, listBusyPorts } from './ports';
 import { updateRegistry } from './registry';
 import { checkIsExpired, removeExpiredRecords } from './reserve';
 
-export type PortBlock = ReturnType<typeof buildBlock>;
-export type ReservationStats = Awaited<ReturnType<typeof stats>>[number];
+type PortBlock = ReturnType<typeof buildBlock>;
+type ReservationStats = Omit<ReservationRecord, 'worktreeId'> & { end: number; isExpired: boolean };
 
-export { BusyPortsError } from './busy-ports-error';
-export { defineConfig } from './config';
-export type { PortoConfig } from './config';
-export { PortoError } from './error';
-export { reserve } from './reserve';
-export type { ReserveOptions } from './reserve';
-export type { VarFactory, Vars } from './vars';
-
-export async function stats() {
+async function cleanup() {
   const { commonDirectory } = await fetchGitContext();
-  const worktreePathsById = await listWorktreePaths(commonDirectory);
-  return updateRegistry(commonDirectory, (records) =>
-    sortBy(
-      records.map(({ worktreeId, ...record }) => {
-        const { end, start } = buildBlock(record);
-        const worktree = worktreePathsById.get(worktreeId) ?? record.worktree;
-        return { ...record, end, isExpired: checkIsExpired(record, Date.now()), start, worktree };
-      }),
-      ['start', 'worktree'],
-    ),
-  );
+  return updateRegistry(commonDirectory, (records) => removeExpiredRecords(records, Date.now()));
 }
 
-export async function cleanup() {
-  const { commonDirectory } = await fetchGitContext();
-  return updateRegistry(commonDirectory, async (records) => removeExpiredRecords(records, Date.now()));
-}
-
-export async function current() {
+async function current() {
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, (records) =>
     records.filter((record) => record.worktreeId === worktreeId).map((record) => buildBlock(record)),
   );
 }
 
-export async function release() {
+async function release() {
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, async (records) => {
     const currentRecords = records.filter((record) => record.worktreeId === worktreeId);
@@ -61,3 +40,34 @@ export async function release() {
     return currentRecords.map((record) => Object.assign(buildBlock(record), { ports: record.ports }));
   });
 }
+
+async function stats() {
+  const { commonDirectory } = await fetchGitContext();
+  const worktreePathsById = await listWorktreePaths(commonDirectory);
+  return updateRegistry(commonDirectory, (records) =>
+    sortBy(
+      records.map(({ worktreeId, ...record }) => {
+        const { end, start } = buildBlock(record);
+        const worktree = worktreePathsById.get(worktreeId) ?? record.worktree;
+        return {
+          ...record,
+          end,
+          isExpired: checkIsExpired(record, Date.now()),
+          start,
+          worktree,
+        } satisfies ReservationStats;
+      }),
+      ['start', 'worktree'],
+    ),
+  );
+}
+
+export { cleanup, current, release, stats };
+export type { PortBlock, ReservationStats };
+export { BusyPortsError } from './busy-ports-error';
+export { defineConfig } from './config';
+export type { PortoConfig } from './config';
+export { PortoError } from './error';
+export { reserve } from './reserve';
+export type { ReserveOptions } from './reserve';
+export type { VarFactory, Vars } from './vars';

@@ -10,27 +10,9 @@ import { updateRegistry } from './registry';
 import { parseOptions } from './schemas';
 import { assertVarsFit, parseVarEntries } from './vars';
 
-export type ReserveOptions = Partial<ReturnType<typeof parseOptions>> & { vars?: undefined | Vars };
+type ReserveOptions = Partial<ReturnType<typeof parseOptions>> & { vars?: undefined | Vars };
 
-export function checkIsExpired(record: Pick<ReservationRecord, 'idleTtlMinutes' | 'keep' | 'lastUsedAt'>, now: number) {
-  return !record.keep && now - Date.parse(record.lastUsedAt) > record.idleTtlMinutes * 60_000;
-}
-
-export async function removeExpiredRecords(records: ReservationRecord[], now: number) {
-  const candidates = await Promise.all(
-    records
-      .filter((record) => checkIsExpired(record, now))
-      .map(async (record) => {
-        const { end, start } = buildBlock(record);
-        return { hasBusyPort: await checkHasBusyPort(start, end, record.host), record };
-      }),
-  );
-  const expiredRecords = candidates.filter(({ hasBusyPort }) => !hasBusyPort).map(({ record }) => record);
-  remove(records, (record) => expiredRecords.includes(record));
-  return expiredRecords.map((record) => buildBlock(record));
-}
-
-async function allocateRecord(records: ReservationRecord[], options: Omit<ReservationRecord, 'index'>) {
+async function allocateRecord(records: Array<ReservationRecord>, options: Omit<ReservationRecord, 'index'>) {
   for (let index = 0; options.start + (index + 1) * options.size - 1 <= 65_535; index += 1) {
     const record = { ...options, index };
     const block = buildBlock(record);
@@ -45,13 +27,31 @@ async function allocateRecord(records: ReservationRecord[], options: Omit<Reserv
   throw new PortoError('blockUnavailable');
 }
 
+function checkIsExpired(record: Pick<ReservationRecord, 'idleTtlMinutes' | 'keep' | 'lastUsedAt'>, now: number) {
+  return !record.keep && now - Date.parse(record.lastUsedAt) > record.idleTtlMinutes * 60_000;
+}
+
 function issuePorts(record: ReservationRecord, portsCount: number) {
   const block = buildBlock(record);
   record.ports = union(record.ports, range(block.start, block.start + portsCount));
   return Object.assign(block, { ports: record.ports });
 }
 
-export async function reserveBlock<Result>(
+async function removeExpiredRecords(records: Array<ReservationRecord>, now: number) {
+  const candidates = await Promise.all(
+    records
+      .filter((record) => checkIsExpired(record, now))
+      .map(async (record) => {
+        const { end, start } = buildBlock(record);
+        return { hasBusyPort: await checkHasBusyPort(start, end, record.host), record };
+      }),
+  );
+  const expiredRecords = candidates.filter(({ hasBusyPort }) => !hasBusyPort).map(({ record }) => record);
+  remove(records, (record) => expiredRecords.includes(record));
+  return expiredRecords.map((record) => buildBlock(record));
+}
+
+async function reserveBlock<Result>(
   {
     git,
     host,
@@ -100,8 +100,12 @@ export async function reserveBlock<Result>(
   });
 }
 
-export async function reserve(options: ReserveOptions = {}) {
+async function reserve(options: ReserveOptions = {}) {
   const settings = parseOptions(options);
   const portsCount = options.vars === undefined ? 0 : parseVarEntries(options.vars).length;
-  return reserveBlock({ ...settings, portsCount }, (block) => block);
+  const block = await reserveBlock({ ...settings, portsCount }, (reservedBlock) => reservedBlock);
+  return block;
 }
+
+export { checkIsExpired, removeExpiredRecords, reserve, reserveBlock };
+export type { ReserveOptions };

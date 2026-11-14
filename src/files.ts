@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { chmod, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export function checkIsFileMissing(error: unknown) {
+function checkIsFileMissing(error: unknown) {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
-export async function fetchCanonicalPath(filePath: string) {
+async function fetchCanonicalPath(filePath: string) {
   try {
     return await realpath(filePath);
   } catch (error) {
@@ -27,7 +27,7 @@ export async function fetchCanonicalPath(filePath: string) {
   }
 }
 
-export async function writeFileAtomically(filePath: string, contents: string) {
+async function writeFileAtomically(filePath: string, contents: string) {
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
   let mode: number | undefined;
   try {
@@ -44,3 +44,5 @@ export async function writeFileAtomically(filePath: string, contents: string) {
     await rm(temporaryPath, { force: true });
   }
 }
+
+export { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically };
