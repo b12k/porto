@@ -13,6 +13,7 @@ import { logError } from './log';
 import {
   fetchExportPaths,
   formatReserveOutput,
+  formatStatsTable,
   formatTable,
   updateEnvironmentFile,
   writeReserveJsonFile,
@@ -112,22 +113,7 @@ cli
   .option('--json', 'Print JSON to stdout')
   .action(async (flags: ReserveFlags) => {
     const reservations = await stats();
-    writeOutput(
-      flags.json
-        ? JSON.stringify(reservations)
-        : formatTable(
-            ['BLOCK', 'PORTS', 'WORKTREE', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
-            reservations.map((record) => [
-              String(record.index),
-              `${record.start}-${record.end}`,
-              record.worktree,
-              record.lastUsedAt,
-              String(record.idleTtlMinutes),
-              record.keep ? 'yes' : 'no',
-              record.isExpired ? 'yes' : 'no',
-            ]),
-          ),
-    );
+    writeOutput(flags.json ? JSON.stringify(reservations) : formatStatsTable(reservations));
   });
 
 cli

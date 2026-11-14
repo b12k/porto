@@ -153,10 +153,13 @@ it('reads from subdirectories without refreshing timestamps or cleaning expired 
   const nestedPath = path.join(repositoryPath, 'nested');
   await mkdir(nestedPath);
   expect(await runCliOutput(['current'], nestedPath)).toBe('0\n');
-  const result = await runCli(['stats', '--json']);
-  expect(result.stdout).toContain('2000-01-01T00:00:00.000Z');
-  expect(result.stdout).toContain('"isExpired":true');
-  expect(await runCliOutput(['stats'])).toContain('WORKTREE');
+  const worktreePath = await realpath(repositoryPath);
+  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toMatchObject([
+    { isExpired: true, lastUsedAt: '2000-01-01T00:00:00.000Z', worktree: worktreePath },
+  ]);
+  const table = await runCliOutput(['stats']);
+  expect(table).toMatch(/WORKTREE +PATH +LAST USED/u);
+  expect(table).toMatch(new RegExp(`repository  ${RegExp.escape(worktreePath)}  .+ years ago`, 'u'));
 });
 
 it('cleans only idle blocks with every port free', async () => {

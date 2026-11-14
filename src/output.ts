@@ -1,8 +1,9 @@
+import { formatDistance } from 'date-fns/formatDistance';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
 
-import type { PortBlock } from './index';
+import type { PortBlock, ReservationStats } from './index';
 
 import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
@@ -110,6 +111,23 @@ export function formatTable(headers: string[], rows: string[][]) {
         .trimEnd(),
     )
     .join('\n');
+}
+
+export function formatStatsTable(reservations: ReservationStats[]) {
+  const now = Date.now();
+  return formatTable(
+    ['BLOCK', 'PORTS', 'WORKTREE', 'PATH', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
+    reservations.map((record) => [
+      String(record.index),
+      `${record.start}-${record.end}`,
+      path.basename(record.worktree) || record.worktree,
+      record.worktree,
+      formatDistance(record.lastUsedAt, now, { addSuffix: true }),
+      String(record.idleTtlMinutes),
+      record.keep ? 'yes' : 'no',
+      record.isExpired ? 'yes' : 'no',
+    ]),
+  );
 }
 
 async function fetchEnvironmentContents(filePath: string) {

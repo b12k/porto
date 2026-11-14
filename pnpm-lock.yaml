@@ -175,6 +175,9 @@ importers:
       cosmiconfig:
         specifier: 10.0.1
         version: 10.0.1
+      date-fns:
+        specifier: 4.4.0
+        version: 4.4.0
       es-toolkit:
         specifier: 1.53.1
         version: 1.53.1
@@ -1733,6 +1736,9 @@ packages:
   data-uri-to-buffer@8.0.0:
     resolution: {integrity: sha512-6UHfyCux51b8PTGDgveqtz1tvphBku5DrMKKJbFAZAJOI2zsjDpDoYE1+QGj7FOMS4BdTFNJsJiR3zEB0xH0yQ==}
     engines: {node: '>= 20'}
+
+  date-fns@4.4.0:
+    resolution: {integrity: sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -3992,6 +3998,8 @@ snapshots:
       which: 2.0.2
 
   data-uri-to-buffer@8.0.0: {}
+
+  date-fns@4.4.0: {}
 
   debug@4.4.3:
     dependencies:
