@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 const apiUrl = new URL('../src/index.ts', import.meta.url).href;
 const tsxPath = import.meta.resolve('tsx');
-const BROKEN_VARS = "vars: ['API_PORT', { BAD_PORT() { throw new Error('broken factory'); } }]";
+const BROKEN_VARS = "vars: ['API_PORT', () => { throw new Error('broken factory'); }]";
 const servers: Array<ReturnType<typeof createServer>> = [];
 let directoryPath: string;
 let start: number;
@@ -86,13 +86,13 @@ it('awaits onReserved after exports and registry unlock, including reused blocks
   expect(JSON.parse(stdout)).toMatchObject([{ ports: [] }]);
 });
 
-it('passes only ports assigned through vars without changing JSON stdout', async () => {
-  await writeConfig(`vars: ['API_PORT'], onReserved(block, ports) {
+it('passes one port per variable entry to onReserved even when it produces multiple variables', async () => {
+  await writeConfig(`vars: [(_block, port) => ({ API_PORT: port, API_PORT_ALIAS: port })], onReserved(block, ports) {
     if (ports[0] !== block.getPort()) throw new Error('Missing assigned port.');
     writeFileSync('reserved.json', JSON.stringify({ index: block.index, ports }));
   }`);
   const { stdout } = await runCli(['reserve', '--json']);
-  expect(JSON.parse(stdout)).toEqual({ API_PORT: start });
+  expect(JSON.parse(stdout)).toEqual({ API_PORT: start, API_PORT_ALIAS: start });
   const marker = await readFile(path.join(directoryPath, 'reserved.json'), 'utf8');
   expect(JSON.parse(marker)).toEqual({ index: 0, ports: [start] });
 });
@@ -102,7 +102,7 @@ it('calls onReleased once per block with saved assigned ports after config chang
     if ((await current()).length !== 0) throw new Error('Hook ran before release completed.');
     await appendFile('released.txt', block.start + ':' + ports.join(',') + '\\n');
   }`;
-  await writeConfig(`vars: ['API_PORT'], ${hooks}`);
+  await writeConfig(`vars: [(_block, port) => ({ API_PORT: port, API_PORT_ALIAS: port })], ${hooks}`);
   await runCli(['reserve']);
   await runCli(['reserve', '--start', String(start + 8), '--size', '1']);
   await writeConfig(hooks, start + 10);
@@ -169,7 +169,7 @@ it('reports a synchronous onReserved failure without rolling back the saved rese
 
 it('leaves the registry unchanged when a variable factory fails', async () => {
   await writeConfig(BROKEN_VARS);
-  await expect(runCli(['reserve'])).rejects.toThrow('Cannot create BAD_PORT');
+  await expect(runCli(['reserve'])).rejects.toThrow(/Cannot create variables for entry 2/u);
   const registryPath = path.join(directoryPath, '.git', 'porto-registry.json');
   await expect(readFile(registryPath)).rejects.toThrow(/ENOENT/u);
 
@@ -177,7 +177,7 @@ it('leaves the registry unchanged when a variable factory fails', async () => {
   await runCli(['reserve']);
   const registry = await readFile(registryPath, 'utf8');
   await writeConfig(BROKEN_VARS);
-  await expect(runCli(['reserve'])).rejects.toThrow('Cannot create BAD_PORT');
+  await expect(runCli(['reserve'])).rejects.toThrow(/Cannot create variables for entry 2/u);
   expect(await readFile(registryPath, 'utf8')).toBe(registry);
 });
 

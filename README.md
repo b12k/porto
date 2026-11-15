@@ -66,7 +66,7 @@ import { defineConfig } from '@b12k/porto';
 
 export default defineConfig({
   envFile: '.env.local',
-  vars: ['API_PORT', { WEB_URL: (_block, port) => `http://localhost:${port}` }],
+  vars: ['PORT', (_block, port) => ({ PORT_2: port, HOST_NAME: `https://localhost:${port}` }), 'DB_PORT'],
   onReserved(block, ports) {
     console.error(`Block ${block.index} has ports ${ports.join(', ')}`);
   },
@@ -75,7 +75,7 @@ export default defineConfig({
 
 Relative paths in config start at the config directory. Relative paths in flags start at the current directory.
 
-Each variable selects a port by position. A function receives the block index, port, and zero-based variable index.
+Each `vars` entry gets one port. A name exports the port number. A function receives the block index, port, and zero-based entry index. It can return several variables for the same port.
 
 A hook receives the block and its assigned ports. `onReserved` runs after file output. `onReleased` runs once per freed block. Porto runs release hooks in parallel.
 

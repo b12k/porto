@@ -4,7 +4,7 @@ import { link, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
+import { parseEnv, promisify } from 'node:util';
 
 import { fetchFreeRange } from './fixture';
 
@@ -59,21 +59,31 @@ afterEach(async () => {
   await rm(target, { force: true, recursive: true });
 });
 
-it('loads a TypeScript defineConfig file and indexes every flattened variable', async () => {
+it('loads a TypeScript defineConfig file and assigns one port per variable entry', async () => {
   await writeConfig(`import { defineConfig } from ${JSON.stringify(packageUrl)};
-    export default defineConfig({ start: ${start}, size: 4, vars: [
+    export default defineConfig({ start: ${start}, size: 3, env: true, vars: [
       'API_PORT',
-      { CLIENT_HOST: (block) => 'wt' + block + '.localhost', CLIENT_URL: (block, port, idx) => block + ':' + port + ':' + idx },
+      (block, port, idx) => ({
+        CLIENT_PORT: port,
+        CLIENT_URL: 'https://wt' + block + '.localhost:' + port + '/' + idx,
+      }),
       'ADMIN_PORT',
     ] });`);
+  const clientUrl = `https://wt0.localhost:${start + 1}/1`;
   expect(JSON.parse(await runCliOutput(['reserve', '--json']))).toEqual({
-    ADMIN_PORT: start + 3,
+    ADMIN_PORT: start + 2,
     API_PORT: start,
-    CLIENT_HOST: 'wt0.localhost',
-    CLIENT_URL: `0:${start + 2}:2`,
+    CLIENT_PORT: start + 1,
+    CLIENT_URL: clientUrl,
   });
-  const { stdout } = await runCli(['stats', '--json']);
-  expect(JSON.parse(stdout)).toMatchObject([{ ports: [start, start + 1, start + 2, start + 3] }]);
+  const env = parseEnv(await readFile(path.join(repositoryPath, '.env'), 'utf8'));
+  expect(env).toEqual({
+    ADMIN_PORT: String(start + 2),
+    API_PORT: String(start),
+    CLIENT_PORT: String(start + 1),
+    CLIENT_URL: clientUrl,
+  });
+  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toMatchObject([{ ports: [start, start + 1, start + 2] }]);
 });
 
 it('runs reserve by default with and without options', async () => {
@@ -214,8 +224,8 @@ it('keeps a stored keep setting when the next config does not specify it', async
   expect(JSON.parse(await runCliOutput(['stats', '--json']))).toMatchObject([{ keep: true }]);
 });
 
-it('lets CLI vars replace configured callbacks and use flattened positions', async () => {
-  await writeConfig(`export default { start: ${start}, size: 3, vars: ['CONFIG_PORT'] };`);
+it('lets CLI vars replace configured callbacks and use their own positions', async () => {
+  await writeConfig(`export default { start: ${start}, size: 3, vars: [(_block, port) => ({ CONFIG_PORT: port })] };`);
   expect(
     JSON.parse(
       await runCliOutput([

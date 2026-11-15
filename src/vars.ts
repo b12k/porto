@@ -1,3 +1,4 @@
+import { isPlainObject } from 'es-toolkit';
 import { types } from 'node:util';
 import { z } from 'zod';
 
@@ -5,28 +6,26 @@ import type { PortBlock } from './index';
 
 import { PortoError } from './error';
 
-type VarEntry = [string, undefined | VarFactory];
-type VarFactory = (block: number, port: number, idx: number) => string;
-type Vars = Array<Record<string, VarFactory> | string>;
+type VarEntry = string | VarFactory;
+type VarFactory = (block: number, port: number, index: number) => Record<string, number | string>;
+type Vars = Array<VarEntry>;
 
 const VAR_NAME_SCHEMA = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
 const VAR_TEXT_SCHEMA = z.string().regex(/^[^\r\n\0]*$/u);
-const VAR_RECORD_SCHEMA = z.custom<Record<string, VarFactory>>((record) => {
-  if (typeof record !== 'object' || record === null || Array.isArray(record)) return false;
-  return Object.entries(record).every(
-    ([name, factory]) => VAR_NAME_SCHEMA.safeParse(name).success && typeof factory === 'function',
-  );
-});
-const VAR_ENTRY_SCHEMA = z.union([VAR_NAME_SCHEMA, VAR_RECORD_SCHEMA]);
+const VAR_FACTORY_SCHEMA = z.custom<VarFactory>((entry) => typeof entry === 'function');
+const VAR_RESULT_ENTRY_SCHEMA = z.tuple([VAR_NAME_SCHEMA, z.union([VAR_TEXT_SCHEMA, z.number()])]);
+const VAR_RESULT_SCHEMA = z
+  .custom<Record<string, unknown>>(isPlainObject)
+  .transform((variables) => Object.entries(variables))
+  .pipe(z.array(VAR_RESULT_ENTRY_SCHEMA));
 
-const VARS_SCHEMA = z
-  .array(VAR_ENTRY_SCHEMA)
-  .transform((vars) =>
-    vars.flatMap<VarEntry>((entry) => (typeof entry === 'string' ? [[entry, undefined]] : Object.entries(entry))),
-  )
-  .refine((entries) => new Set(entries.map(([name]) => name)).size === entries.length, {
-    message: 'Variable names must be unique.',
-  });
+const VARS_SCHEMA = z.array(z.union([VAR_NAME_SCHEMA, VAR_FACTORY_SCHEMA])).refine(
+  (entries) => {
+    const names = entries.filter((entry) => typeof entry === 'string');
+    return new Set(names).size === names.length;
+  },
+  { message: 'Variable names must be unique.' },
+);
 
 function assertVarsFit(varsCount: number, size: number) {
   if (varsCount > size) {
@@ -34,39 +33,49 @@ function assertVarsFit(varsCount: number, size: number) {
   }
 }
 
-function mapBlockToVars(block: PortBlock, entries: Array<VarEntry>) {
-  const mappedEntries = entries.map<[string, number | string]>(([name, factory], idx) => {
-    const port = block.getPort(idx);
-    if (factory === undefined) return [name, port];
-    try {
-      const text: unknown = factory(block.index, port, idx);
-      if (types.isPromise(text)) {
-        text.catch(() => {
-          // Async factories are rejected below; observe their errors without awaiting them.
-        });
-      }
-      return [name, VAR_TEXT_SCHEMA.parse(text)];
-    } catch (error) {
-      throw new PortoError('mappingInvalid', `Cannot create ${name}; expected a single-line string.`, { cause: error });
+function mapVarEntry(entry: VarEntry, block: PortBlock, index: number) {
+  const port = block.getPort(index);
+  if (typeof entry === 'string') return [[entry, port] as const];
+  try {
+    const variables: unknown = entry(block.index, port, index);
+    if (types.isPromise(variables)) {
+      variables.catch(() => {
+        // Async factories are rejected below; observe their errors without awaiting them.
+      });
     }
-  });
-  return Object.fromEntries(mappedEntries);
+    return VAR_RESULT_SCHEMA.parse(variables);
+  } catch (error) {
+    throw new PortoError(
+      'mappingInvalid',
+      `Cannot create variables for entry ${index + 1}; expected an object with valid names and single-line strings or finite numbers.`,
+      { cause: error },
+    );
+  }
+}
+
+function mapBlockToVars(block: PortBlock, entries: Vars) {
+  const environment = new Map<string, number | string>();
+  for (const [index, entry] of entries.entries()) {
+    for (const [name, value] of mapVarEntry(entry, block, index)) {
+      if (environment.has(name)) {
+        throw new PortoError('mappingInvalid', `Variable names must be unique. Duplicate: ${name}.`);
+      }
+      environment.set(name, value);
+    }
+  }
+  return Object.fromEntries(environment);
 }
 
 function parseVar(entry: string) {
   const separator = entry.indexOf(':');
   const name = (separator === -1 ? entry : entry.slice(0, separator)).trim();
-  if (separator === -1) return name;
+  if (separator === -1) return { name };
   const template = entry.slice(separator + 1);
   const result = VAR_TEXT_SCHEMA.safeParse(template);
   if (!result.success) {
     throw new PortoError('mappingInvalid', 'Vars templates must fit on one line.', { cause: result.error });
   }
-  return {
-    [name](block: number, port: number) {
-      return template.replaceAll('{{block}}', String(block)).replaceAll('{{port}}', String(port));
-    },
-  };
+  return { name, template };
 }
 
 function parseVarEntries(vars: unknown) {
@@ -80,7 +89,14 @@ function parseVarEntries(vars: unknown) {
 }
 
 function parseVars(source: string) {
-  return parseVarEntries(source.split(';').map((entry) => parseVar(entry)));
+  const entries = source.split(';').map((entry) => parseVar(entry));
+  parseVarEntries(entries.map(({ name }) => name));
+  return entries.map<VarEntry>(({ name, template }) => {
+    if (template === undefined) return name;
+    return (block, port) => ({
+      [name]: template.replaceAll('{{block}}', String(block)).replaceAll('{{port}}', String(port)),
+    });
+  });
 }
 
 export { assertVarsFit, mapBlockToVars, parseVarEntries, parseVars, VARS_SCHEMA };
