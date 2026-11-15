@@ -289,5 +289,7 @@ it('rejects bad arguments, unknown commands and invalid mapping before allocatin
   );
   expect(JSON.parse(await runCliOutput(['stats', '--json']))).toEqual([]);
   expect(await runCliOutput(['--help'])).toContain('reserve');
-  expect(await runCliOutput(['--version'])).toContain('0.0.0');
+  const manifest: unknown = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const version = await runCliOutput(['--version']);
+  expect(manifest).toHaveProperty('version', version.trim());
 });
