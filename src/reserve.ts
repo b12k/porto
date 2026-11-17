@@ -1,15 +1,19 @@
 import { range, remove, union } from 'es-toolkit';
 
 import type { ReservationRecord } from './registry';
-import type { Vars } from './vars';
+import type { Vars, VarsResult } from './vars';
 
 import { PortoError } from './error';
 import { fetchGitContext } from './git';
 import { buildBlock, checkHasBusyPort } from './ports';
 import { updateRegistry } from './registry';
 import { parseOptions } from './schemas';
-import { assertVarsFit, parseVarEntries } from './vars';
+import { assertVarsFit, mapBlockToVars, parseVarEntries } from './vars';
 
+type ReservedBlock<Entries extends Vars = Vars> = ReturnType<typeof buildBlock> & {
+  ports: Array<number>;
+  vars: VarsResult<Entries>;
+};
 type ReserveOptions = Partial<ReturnType<typeof parseOptions>> & { vars?: undefined | Vars };
 
 async function allocateRecord(records: Array<ReservationRecord>, options: Omit<ReservationRecord, 'index'>) {
@@ -31,10 +35,11 @@ function checkIsExpired(record: Pick<ReservationRecord, 'idleTtlMinutes' | 'keep
   return !record.keep && now - Date.parse(record.lastUsedAt) > record.idleTtlMinutes * 60_000;
 }
 
-function issuePorts(record: ReservationRecord, portsCount: number) {
+function issuePorts(record: ReservationRecord, entries: Vars) {
   const block = buildBlock(record);
-  record.ports = union(record.ports, range(block.start, block.start + portsCount));
-  return Object.assign(block, { ports: record.ports });
+  const vars = mapBlockToVars(block, entries);
+  record.ports = union(record.ports, range(block.start, block.start + entries.length));
+  return Object.assign(block, { ports: record.ports, vars });
 }
 
 async function removeExpiredRecords(records: Array<ReservationRecord>, now: number) {
@@ -51,19 +56,19 @@ async function removeExpiredRecords(records: Array<ReservationRecord>, now: numb
   return expiredRecords.map((record) => buildBlock(record));
 }
 
-async function reserveBlock<Result>(
+async function commitReservation<Result>(
   {
     git,
     host,
     idleTtlMinutes,
     keep,
-    portsCount,
     size,
     start,
-  }: ReturnType<typeof parseOptions> & { git?: Awaited<ReturnType<typeof fetchGitContext>>; portsCount: number },
+    vars = [],
+  }: ReturnType<typeof parseOptions> & { git?: Awaited<ReturnType<typeof fetchGitContext>>; vars?: undefined | Vars },
   prepare: (block: ReturnType<typeof issuePorts>) => Result,
 ) {
-  assertVarsFit(portsCount, size);
+  assertVarsFit(vars.length, size);
   const { commonDirectory, worktree, worktreeId } = git ?? (await fetchGitContext());
   return updateRegistry(commonDirectory, async (records) => {
     const now = Date.now();
@@ -96,16 +101,20 @@ async function reserveBlock<Result>(
       }));
     if (!existingRecord) records.push(record);
     // A failed factory must leave the registry untouched.
-    return prepare(issuePorts(record, portsCount));
+    return prepare(issuePorts(record, vars));
   });
 }
 
+async function reserve<const Entries extends Vars>(
+  options: ReserveOptions & { vars: Entries },
+): Promise<ReservedBlock<Entries>>;
+async function reserve(options?: ReserveOptions): Promise<ReservedBlock>;
 async function reserve(options: ReserveOptions = {}) {
   const settings = parseOptions(options);
-  const portsCount = options.vars === undefined ? 0 : parseVarEntries(options.vars).length;
-  const block = await reserveBlock({ ...settings, portsCount }, (reservedBlock) => reservedBlock);
+  const vars = options.vars === undefined ? undefined : parseVarEntries(options.vars);
+  const block = await commitReservation({ ...settings, vars }, (reservedBlock) => reservedBlock);
   return block;
 }
 
-export { checkIsExpired, removeExpiredRecords, reserve, reserveBlock };
+export { checkIsExpired, commitReservation, removeExpiredRecords, reserve };
 export type { ReserveOptions };

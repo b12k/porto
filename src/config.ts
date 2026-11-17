@@ -18,6 +18,7 @@ const CONFIG_SCHEMA = z
     env: z.boolean(),
     envFile: z.string().min(1),
     jsonFile: z.union([z.literal(false), z.string().min(1)]),
+    silent: z.boolean(),
     vars: VARS_SCHEMA,
   })
   .partial();
@@ -75,6 +76,7 @@ function applyReserveDefaults(settings: ReturnType<typeof parseConfig>) {
     env: settings.env ?? false,
     envFile: settings.envFile ?? DEFAULT_ENV_FILE,
     jsonFile: settings.jsonFile ?? false,
+    silent: settings.silent ?? false,
   };
 }
 

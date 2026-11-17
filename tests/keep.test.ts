@@ -100,10 +100,51 @@ afterEach(async () => {
 it('defaults new reservations to keep false and centralizes optional numeric defaults', async () => {
   expect(parseOptions({})).toEqual({ idleTtlMinutes: 60, size: 10, start: 10_000 });
   expect(parseOptions({ size: undefined, start: undefined })).toEqual({ idleTtlMinutes: 60, size: 10, start: 10_000 });
-  await runApi(buildReserveSource());
+  expect(await runApi(buildReserveSource())).toBe('');
   expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await stats()));'))).toMatchObject([
     { keep: false },
   ]);
+});
+
+it('returns named variables and evaluates each factory once', async () => {
+  const stdout = await runApi(`
+    let calls = 0;
+    const block = await reserve({
+      start: ${start}, size: 2, vars: [
+        'API_PORT',
+        (_block, port) => {
+          calls += 1;
+          return { DB_PORT: port, DB_URL: 'tcp://localhost:' + port };
+        },
+      ],
+    });
+    const reused = await reserve({ start: ${start}, size: 2 });
+    process.stdout.write(JSON.stringify({ block, calls, firstPort: block.getPort(), reusedVars: reused.vars }));
+  `);
+  expect(JSON.parse(stdout)).toEqual({
+    block: {
+      end: start + 1,
+      index: 0,
+      ports: [start, start + 1],
+      start,
+      vars: { API_PORT: start, DB_PORT: start + 1, DB_URL: `tcp://localhost:${start + 1}` },
+    },
+    calls: 1,
+    firstPort: start,
+    reusedVars: {},
+  });
+});
+
+it('leaves the existing reservation unchanged when an API factory fails', async () => {
+  await runApi(buildReserveSource());
+  const registryPath = getRegistryPath();
+  const previousContents = await readFile(registryPath, 'utf8');
+  await expect(
+    runApi(
+      `await reserve({ start: ${start}, size: 1, keep: true, vars: [() => { throw new Error('broken factory'); }] });`,
+    ),
+  ).rejects.toThrow('Cannot create variables for entry 1');
+  expect(await readFile(registryPath, 'utf8')).toBe(previousContents);
 });
 
 it('preserves kept reservations through idle cleanup and repeated reserve without keep', async () => {

@@ -7,8 +7,23 @@ import type { PortBlock } from './index';
 import { PortoError } from './error';
 
 type VarEntry = string | VarFactory;
+type VarEntryResult<Entry extends VarEntry> = Entry extends string
+  ? string extends Entry
+    ? Partial<Record<string, number>>
+    : Record<Entry, number>
+  : Entry extends VarFactory
+    ? ReturnType<Entry>
+    : never;
 type VarFactory = (block: number, port: number, index: number) => Record<string, number | string>;
-type Vars = Array<VarEntry>;
+type Vars = ReadonlyArray<VarEntry>;
+type VarsResult<Entries extends Vars> = Entries extends readonly [
+  infer Entry extends VarEntry,
+  ...infer Rest extends Vars,
+]
+  ? VarEntryResult<Entry> & VarsResult<Rest>
+  : number extends Entries['length']
+    ? Partial<Record<string, number | string>>
+    : object;
 
 const VAR_NAME_SCHEMA = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
 const VAR_TEXT_SCHEMA = z.string().regex(/^[^\r\n\0]*$/u);
@@ -100,4 +115,4 @@ function parseVars(source: string) {
 }
 
 export { assertVarsFit, mapBlockToVars, parseVarEntries, parseVars, VARS_SCHEMA };
-export type { VarEntry, VarFactory, Vars };
+export type { VarEntry, VarFactory, Vars, VarsResult };

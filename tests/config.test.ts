@@ -171,22 +171,26 @@ it('resolves config paths from the config directory and CLI paths from cwd', asy
   expect(await readFile(path.join(nestedPath, 'cli.env'), 'utf8')).toBe('PORTO_BLOCK=0\n');
 });
 
-it('resolves configured files from the config directory and writes JSON independently of stdout', async () => {
+it('writes configured files in silent mode and lets --no-silent restore stdout', async () => {
   const nestedPath = path.join(repositoryPath, 'nested');
   await mkdir(nestedPath);
-  await writeConfig(`export default { start: ${start}, size: 2, envFile: '.env', jsonFile: 'ports.json' };`);
-  expect(await runCliOutput(['reserve'], nestedPath)).toBe('0\n');
+  await writeConfig(
+    `export default { start: ${start}, size: 2, envFile: '.env', jsonFile: 'ports.json', silent: true };`,
+  );
+  expect(await runCliOutput([], nestedPath)).toBe('');
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
   expect(JSON.parse(jsonOutput)).toEqual({ end: start + 1, index: 0, start });
   expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('PORTO_BLOCK=0\n');
   expect(await readdir(nestedPath)).toEqual([]);
+  expect(await runCliOutput(['reserve', '--no-silent'], nestedPath)).toBe('0\n');
 });
 
 it('creates exports only when requested and uses the default env filename and PORTO_BLOCK', async () => {
   const args = ['reserve', '--start', String(start), '--size', '2'];
   await runCli(args);
   expect(await readdir(repositoryPath)).toEqual(['.git']);
-  await runCli([...args, '--json-file=ports.json', '--env']);
+  const stdout = await runCliOutput([...args, '--json-file=ports.json', '--env', '--json', '--silent']);
+  expect(stdout).toBe('');
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
   expect(JSON.parse(jsonOutput)).toEqual({ end: start + 1, index: 0, start });
   expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('PORTO_BLOCK=0\n');
@@ -274,7 +278,8 @@ it('lets the CLI host override the config host', async () => {
 
 it('fails on a broken config instead of silently using defaults', async () => {
   await writeConfig('export default {');
-  await expect(runCli(['reserve'])).rejects.toMatchObject({ code: 1, stdout: '' });
+  const expectedStderr: unknown = expect.stringContaining('Invalid Porto configuration.');
+  await expect(runCli(['reserve', '--silent'])).rejects.toMatchObject({ code: 1, stderr: expectedStderr, stdout: '' });
 });
 
 it('loads config only for CLI reserve, not the library API or read commands', async () => {
@@ -283,7 +288,7 @@ it('loads config only for CLI reserve, not the library API or read commands', as
   const { stdout } = await execFileAsync(process.execPath, ['--import', tsxPath, '--input-type=module', '-e', source], {
     cwd: repositoryPath,
   });
-  expect(JSON.parse(stdout)).toEqual({ end: start + 1, index: 0, ports: [], start });
+  expect(JSON.parse(stdout)).toEqual({ end: start + 1, index: 0, ports: [], start, vars: {} });
   expect(JSON.parse(await runCliOutput(['current', '--json']))).toEqual({ end: start + 1, index: 0, start });
   expect(JSON.parse(await runCliOutput(['stats', '--json']))).toMatchObject([{ size: 2, start }]);
 });
