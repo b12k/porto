@@ -10,10 +10,6 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  id-token: write
-
 env:
   GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
   GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
@@ -22,9 +18,39 @@ env:
   PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: false
 
 jobs:
+  pr:
+    name: Detect PR merge
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      merged: ${{ steps.detect.outputs.merged }}
+    steps:
+      - id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          merged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq \
+            "any(.[]; .merged_at != null and .merge_commit_sha == \"$GITHUB_SHA\" and .base.ref == \"$GITHUB_REF_NAME\")") || exit 0
+          echo "merged=$merged" >> "$GITHUB_OUTPUT"
+
+  check:
+    needs: pr
+    # The master ruleset requires Check before merging a PR.
+    if: ${{ !cancelled() && needs.pr.outputs.merged != 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/check.yml
+
   release:
     name: Release
+    needs: [pr, check]
+    if: ${{ !cancelled() && (needs.pr.outputs.merged == 'true' || needs.check.result == 'success') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
 
     steps:
       - name: Checkout
