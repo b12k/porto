@@ -18,8 +18,8 @@ import {
   updateEnvironmentFile,
   writeReserveJsonFile,
 } from './output';
-import { reserveBlock } from './reserve';
-import { mapBlockToVars, parseVars } from './vars';
+import { commitReservation } from './reserve';
+import { parseVars } from './vars';
 
 type ReserveFlags = Omit<PortoConfig, 'idleTtlMinutes' | 'vars'> & {
   idle?: number;
@@ -54,9 +54,10 @@ async function handleReserve(flags: ReserveFlags, command: Command) {
   const git = await fetchGitContext();
   const { vars: entries, ...settings } = await fetchSettings(flags, command, git.worktree);
   const { environmentPath, jsonPath } = await fetchExportPaths(settings, git.commonDirectory);
-  const prepared = await reserveBlock({ ...settings, git, portsCount: entries?.length ?? 0 }, ({ ports, ...block }) => {
-    const environment = entries === undefined ? undefined : mapBlockToVars(block, entries);
-    return { block, environment, output: formatReserveOutput(block, environment, settings.json), ports };
+  const prepared = await commitReservation({ ...settings, git, vars: entries }, ({ ports, vars, ...block }) => {
+    const environment = entries === undefined ? undefined : vars;
+    const output = settings.silent ? undefined : formatReserveOutput(block, environment, settings.json);
+    return { block, environment, output, ports };
   });
   const { block, environment, output, ports } = prepared;
   if (jsonPath) await writeReserveJsonFile(jsonPath, block, environment);
@@ -64,7 +65,7 @@ async function handleReserve(flags: ReserveFlags, command: Command) {
     await updateEnvironmentFile(environmentPath, environment ?? { PORTO_BLOCK: block.index }, git.commonDirectory);
   }
   await runHook('onReserved', () => settings.onReserved?.(block, ports));
-  writeOutput(output);
+  if (output !== undefined) writeOutput(output);
 }
 
 const cli = new Command('porto');
@@ -86,6 +87,8 @@ cli
   .option('--json', 'Print JSON to stdout')
   .option('--json-file <file>', 'Save JSON to a file independently of stdout')
   .option('--no-json-file', 'Skip the configured JSON file')
+  .option('--silent', 'Skip the reservation output on stdout')
+  .option('--no-silent', 'Print the reservation output on stdout')
   .option('--env', 'Update the env file (default: disabled)')
   .option('--no-env', 'Skip the env file')
   .option('--env-file <file>', 'Set the env filename and enable env output (default: .env)')

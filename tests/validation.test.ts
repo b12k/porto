@@ -1,3 +1,5 @@
+import type { IsEqual } from 'type-fest';
+
 import { expect, it } from '@rstest/core';
 
 import { applyReserveDefaults, parseConfig } from '../src/config';
@@ -12,6 +14,7 @@ it('applies reservation and output defaults without enabling the default env fil
     envFile: '.env',
     idleTtlMinutes: 60,
     jsonFile: false,
+    silent: false,
     size: 10,
     start: 10_000,
   });
@@ -47,13 +50,23 @@ it('validates hooks without executing them and infers their block arguments', ()
 });
 
 it('validates library options through the Porto error system', async () => {
-  const failure = reserve({ size: 0 });
+  const failure = reserve({
+    size: 0,
+    vars: ['PORT', 'API_PORT', (_block, port) => ({ API_URL: `http://localhost:${port}` })],
+  }).then(({ vars }) => {
+    const { API_PORT, API_URL, PORT } = vars;
+    const values: { API_PORT: number; API_URL: string; PORT: number } = { API_PORT, API_URL, PORT };
+    return { ...values, hasExactKeys: true satisfies IsEqual<keyof typeof vars, 'API_PORT' | 'API_URL' | 'PORT'> };
+  });
   await expect(failure).rejects.toBeInstanceOf(PortoError);
   await expect(failure).rejects.toHaveProperty('code', 'optionsInvalid');
   await expect(reserve({ size: 2, start: 65_535 })).rejects.toThrow('size');
   await expect(reserve({ idleTtlMinutes: 0 })).rejects.toThrow('idleTtlMinutes');
   await expect(reserve({ host: ' ' })).rejects.toThrow('host');
   await expect(reserve({ start: Number.NaN })).rejects.toThrow('start');
+  await expect(
+    reserve({ size: 2, vars: ['PORT', 'API_PORT', 'DB_PORT', 'WEB_PORT', 'HEALTH_PORT'] }),
+  ).rejects.toHaveProperty('code', 'mappingInvalid');
 });
 
 it('calculates inclusive block bounds and validates getPort offsets', () => {
