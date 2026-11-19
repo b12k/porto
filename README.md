@@ -149,22 +149,14 @@ const block = await reserve({
   host: '127.0.0.1',
   idleTtlMinutes: 30,
   keep: true,
-  vars: [
-    'PORT',
-    (_block, port) => ({
-      API_PORT: port,
-      API_URL: `http://localhost:${port}`,
-      HEALTH_PORT: port,
-      HEALTH_URL: `http://localhost:${port}/health`,
-    }),
-  ],
+  vars: ['PORT', (_block, port) => ({ API_PORT: port, API_URL: `http://localhost:${port}` })],
 });
 const { API_PORT, API_URL } = block.vars;
 ```
 
 `reserve()` accepts `start`, `size`, `host`, `idleTtlMinutes`, `keep`, and `vars`. All six options are optional and use the defaults in the config table.
 
-Each entry in `vars` uses one port. The example returns five named values from two entries. Five separate entries with `size: 2` throw `PortoError` with code `mappingInvalid` before Porto saves a reservation.
+Each entry in `vars` uses one port. The example returns three named values from two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a reservation.
 
 ### Read and release reservations
 
