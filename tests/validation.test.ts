@@ -81,8 +81,8 @@ it('calculates inclusive block bounds and validates getPort offsets', () => {
 
 it('handles special variable names, template ports and env quoting', () => {
   const block = buildBlock({ index: 2, size: 3, start: 1000 });
-  expect(mapBlockToVars(block, parseVars('__proto__;HOST:wt{{block}}'))).toEqual({ ['__proto__']: 1006, HOST: 'wt2' });
-  expect(mapBlockToVars(block, parseVars('HOST:wt{{block}};API;URL:{{port}}/{{port}}'))).toEqual({
+  expect(mapBlockToVars(block, parseVars('__proto__;HOST=wt{{block}}'))).toEqual({ ['__proto__']: 1006, HOST: 'wt2' });
+  expect(mapBlockToVars(block, parseVars('HOST=wt{{block}};API;URL={{port}}/{{port}}'))).toEqual({
     API: 1007,
     HOST: 'wt2',
     URL: '1008/1008',

@@ -82,7 +82,7 @@ cli
   .option('--host <host>', 'Host to check for busy ports (default: detect local addresses)')
   .option('--size <count>', 'Number of ports in each block (default: 10)', Number)
   .option('--idle <minutes>', 'Idle TTL in minutes (default: 60)', Number)
-  .option('--vars <entries>', 'NAME or NAME:template variables (| shares a port, ; starts the next)')
+  .option('--vars <entries>', 'NAME or NAME=template variables (| shares a port, ; starts the next)')
   .option('--no-vars', 'Ignore configured variables')
   .option('--json', 'Print JSON to stdout')
   .option('--json-file <file>', 'Save JSON to a file independently of stdout')

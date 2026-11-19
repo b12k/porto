@@ -82,7 +82,7 @@ function mapBlockToVars(block: PortBlock, entries: Vars) {
 }
 
 function parseVar(entry: string) {
-  const separator = entry.indexOf(':');
+  const separator = entry.indexOf('=');
   const name = (separator === -1 ? entry : entry.slice(0, separator)).trim();
   if (separator === -1) return { name };
   const template = entry.slice(separator + 1);

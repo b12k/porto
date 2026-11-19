@@ -225,23 +225,23 @@ it('fails closed on a corrupt registry and leaves its contents intact', async ()
   expect(await readFile(filePath, 'utf8')).toBe('{broken');
 });
 it('maps grouped names and templates into stdout, JSON, and env files', async () => {
-  const vars = 'API_PORT|CLIENT_HOST:wt{{block}}.localhost;URL:http://localhost:{{port}}/{{port}}|DB_PORT';
+  const vars = 'API_PORT|CLIENT_HOST=wt{{block}}.localhost;URL=http://localhost:{{port}}/?port={{port}}|DB_PORT';
   const result = await runCli(reserveArgs('--vars', vars, '--json-file=ports.json', '--env'));
-  const output = `API_PORT=${start}\nCLIENT_HOST=wt0.localhost\nURL=http://localhost:${start + 1}/${start + 1}\nDB_PORT=${start + 1}\n`;
+  const output = `API_PORT=${start}\nCLIENT_HOST=wt0.localhost\nURL='http://localhost:${start + 1}/?port=${start + 1}'\nDB_PORT=${start + 1}\n`;
   expect(result.stdout).toBe(output);
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
   expect(JSON.parse(jsonOutput)).toEqual({
     API_PORT: start,
     CLIENT_HOST: 'wt0.localhost',
     DB_PORT: start + 1,
-    URL: `http://localhost:${start + 1}/${start + 1}`,
+    URL: `http://localhost:${start + 1}/?port=${start + 1}`,
   });
   expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe(output);
 });
 
 it('preserves JSON template strings without requiring env quoting', async () => {
   const title = 'Bob\'s "dev"';
-  const result = await runCli(reserveArgs('--vars', `TITLE:${title}`, '--json', '--json-file=ports.json'));
+  const result = await runCli(reserveArgs('--vars', `TITLE=${title}`, '--json', '--json-file=ports.json'));
   expect(JSON.parse(result.stdout)).toEqual({ TITLE: title });
   expect(await readFile(path.join(repositoryPath, 'ports.json'), 'utf8')).toBe(result.stdout);
 });
@@ -249,7 +249,7 @@ it('preserves JSON template strings without requiring env quoting', async () => 
 it('updates existing env keys and appends missing ones, preserving comments and CRLF', async () => {
   const envPath = path.join(repositoryPath, '.env.local');
   await writeFile(envPath, '# config\r\nexport API_PORT = 1 # keep\r\nOTHER="untouched"\r\nAPI_PORT=2\r\n');
-  await runCli(reserveArgs('--vars', 'API_PORT;HOST:wt{{block}}.localhost', '--env-file=.env.local'));
+  await runCli(reserveArgs('--vars', 'API_PORT;HOST=wt{{block}}.localhost', '--env-file=.env.local'));
   expect(await readFile(envPath, 'utf8')).toBe(
     `# config\r\nexport API_PORT = ${start} # keep\r\nOTHER="untouched"\r\nAPI_PORT=${start}\r\nHOST=wt0.localhost\r\n`,
   );
