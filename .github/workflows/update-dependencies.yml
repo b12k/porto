@@ -31,10 +31,21 @@ jobs:
           cache: true
 
       - name: Install dependencies
+        id: install
         run: pnpm i --no-frozen-lockfile
+
+      - name: Update pnpm
+        run: |
+          trap 'git restore -- package.json pnpm-lock.yaml' ERR
+          pnpm exec ncu -u --dep packageManager -c 1
+          if ! git diff --quiet -- package.json; then
+            pnpm deps:update:install
+            pnpm deps:update:doctor
+          fi
 
       - name: Update
         id: update
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm deps:update && pnpm deps:check
 
       - name: Check changes

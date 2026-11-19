@@ -39,7 +39,7 @@
     "check:types": "tsc --noEmit",
     "check:tests": "rstest run",
     "deps:check": "ncu -e 2 -c 1",
-    "deps:update": "ncu -du --doctorInstall \"pnpm deps:update:install\" --doctorTest \"pnpm deps:update:doctor\" -c 1",
+    "deps:update": "ncu -du --dep prod,dev,optional --doctorInstall \"pnpm deps:update:install\" --doctorTest \"pnpm deps:update:doctor\" -c 1",
     "deps:update:doctor": "run-p -l check:types check:scripts check:tests build",
     "deps:update:install": "pnpm i --no-frozen-lockfile",
     "dev": "rslib --watch",
