@@ -235,7 +235,7 @@ it('lets CLI vars replace configured callbacks and use their own positions', asy
       await runCliOutput([
         'reserve',
         '--vars',
-        'API_PORT;HOST:wt{{block}}.localhost;URL:http://localhost:{{port}}',
+        'API_PORT;HOST=wt{{block}}.localhost;URL=http://localhost:{{port}}',
         '--json',
       ]),
     ),

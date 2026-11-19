@@ -82,7 +82,7 @@ function mapBlockToVars(block: PortBlock, entries: Vars) {
 }
 
 function parseVar(entry: string) {
-  const separator = entry.indexOf(':');
+  const separator = entry.indexOf('=');
   const name = (separator === -1 ? entry : entry.slice(0, separator)).trim();
   if (separator === -1) return { name };
   const template = entry.slice(separator + 1);
@@ -104,13 +104,18 @@ function parseVarEntries(vars: unknown) {
 }
 
 function parseVars(source: string) {
-  const entries = source.split(';').map((entry) => parseVar(entry));
-  parseVarEntries(entries.map(({ name }) => name));
-  return entries.map<VarEntry>(({ name, template }) => {
-    if (template === undefined) return name;
-    return (block, port) => ({
-      [name]: template.replaceAll('{{block}}', String(block)).replaceAll('{{port}}', String(port)),
-    });
+  const groups = source.split(';').map((group) => group.split('|').map((entry) => parseVar(entry)));
+  parseVarEntries(groups.flat().map(({ name }) => name));
+  return groups.map<VarEntry>((group) => {
+    const [firstVar] = group;
+    if (group.length === 1 && firstVar && firstVar.template === undefined) return firstVar.name;
+    return (block, port) =>
+      Object.fromEntries(
+        group.map(({ name, template }) => [
+          name,
+          template?.replaceAll('{{block}}', String(block)).replaceAll('{{port}}', String(port)) ?? port,
+        ]),
+      );
   });
 }
 

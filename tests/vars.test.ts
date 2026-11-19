@@ -28,7 +28,7 @@ it('shares one indexed port across variables from the same factory', () => {
 
 it('uses the same indexed semantics for CLI templates and structured vars', () => {
   const block = buildBlock({ index: 2, size: 4, start: 1000 });
-  const vars = parseVars('API_PORT;CLIENT_HOST:wt{{block}}.localhost;URL:http://localhost:{{port}}/{{port}};LAST_PORT');
+  const vars = parseVars('API_PORT;CLIENT_HOST=wt{{block}}.localhost;URL=http://localhost:{{port}}/{{port}};LAST_PORT');
   expect(mapBlockToVars(block, vars)).toEqual({
     API_PORT: 1008,
     CLIENT_HOST: 'wt2.localhost',
@@ -54,9 +54,14 @@ it('rejects invalid names, duplicates and multiline CLI templates', () => {
   expect(() => parseVars('BAD-NAME')).toThrow(PortoError);
   expect(() => parseVars('')).toThrow(PortoError);
   expect(() => parseVars('A;A')).toThrow(PortoError);
-  expect(() => parseVars('A:{{port}};A')).toThrow(PortoError);
+  expect(() => parseVars('A:{{port}}')).toThrow(PortoError);
+  expect(() => parseVars('A={{port}};A')).toThrow(PortoError);
+  expect(() => parseVars('A|A={{port}}')).toThrow(PortoError);
+  expect(() => parseVars('A|B;B')).toThrow(PortoError);
+  expect(() => parseVars('A||B')).toThrow(PortoError);
+  expect(() => parseVars('A|B-INVALID={{port}}')).toThrow(PortoError);
   expect(() => parseVars('A;')).toThrow(PortoError);
-  expect(() => parseVars('A:line\nnext')).toThrow(PortoError);
+  expect(() => parseVars('A=line\nnext')).toThrow(PortoError);
   expect(VARS_SCHEMA.safeParse([{ API_PORT: () => '1000' }]).success).toBe(false);
   expect(VARS_SCHEMA.safeParse(['API_PORT', 'API_PORT']).success).toBe(false);
 });
@@ -141,7 +146,7 @@ it('rejects async factories without leaving an unhandled rejection', async () =>
 
 it('preserves special property names and JSON-compatible template strings', () => {
   const block = buildBlock({ index: 0, size: 3, start: 1000 });
-  const vars = parseVars('__proto__:{{port}};constructor;TITLE:Bob\'s "dev"');
+  const vars = parseVars('__proto__={{port}};constructor;TITLE=Bob\'s "dev"');
   const environment = mapBlockToVars(block, vars);
   expect(Object.hasOwn(environment, '__proto__')).toBe(true);
   expect(environment).toEqual({ ['__proto__']: '1000', constructor: 1001, TITLE: 'Bob\'s "dev"' });

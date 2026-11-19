@@ -50,7 +50,11 @@ Run each command with `pnpm exec porto`. `reserve` is the default command.
 
 Use `-h` or `--help` for help. Use `-V` or `--version` for the version.
 
-Separate `--vars` entries with `;`. Use `NAME` for a port or `NAME:template` for text. Templates accept `{{block}}` and `{{port}}`.
+Use `|` to share a port between variables and `;` to advance to the next port. Use `NAME` for a port number or `NAME=template` for text. Templates accept `{{block}}` and `{{port}}`.
+
+```sh
+pnpm exec porto --vars 'PORT|HOST_URL=http://localhost:{{port}};API_PORT' --env
+```
 
 With no variables, `--env` writes `PORTO_BLOCK`.
 
@@ -145,22 +149,14 @@ const block = await reserve({
   host: '127.0.0.1',
   idleTtlMinutes: 30,
   keep: true,
-  vars: [
-    'PORT',
-    (_block, port) => ({
-      API_PORT: port,
-      API_URL: `http://localhost:${port}`,
-      HEALTH_PORT: port,
-      HEALTH_URL: `http://localhost:${port}/health`,
-    }),
-  ],
+  vars: ['PORT', (_block, port) => ({ API_PORT: port, API_URL: `http://localhost:${port}` })],
 });
 const { API_PORT, API_URL } = block.vars;
 ```
 
 `reserve()` accepts `start`, `size`, `host`, `idleTtlMinutes`, `keep`, and `vars`. All six options are optional and use the defaults in the config table.
 
-Each entry in `vars` uses one port. The example returns five named values from two entries. Five separate entries with `size: 2` throw `PortoError` with code `mappingInvalid` before Porto saves a reservation.
+Each entry in `vars` uses one port. The example returns three named values from two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a reservation.
 
 ### Read and release reservations
 
