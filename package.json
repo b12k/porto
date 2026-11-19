@@ -86,11 +86,11 @@
     "oxlint-tsgolint": "7.0.2007",
     "release-it": "21.1.2",
     "tsx": "4.23.15",
-    "type-fest": "6.0.1",
+    "type-fest": "6.0.2",
     "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@12.18.0"
+  "packageManager": "pnpm@12.21.0"
 }
