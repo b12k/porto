@@ -50,7 +50,11 @@ Run each command with `pnpm exec porto`. `reserve` is the default command.
 
 Use `-h` or `--help` for help. Use `-V` or `--version` for the version.
 
-Separate `--vars` entries with `;`. Use `NAME` for a port or `NAME:template` for text. Templates accept `{{block}}` and `{{port}}`.
+Use `|` to share a port between variables and `;` to advance to the next port. Use `NAME` for a port number or `NAME:template` for text. Templates accept `{{block}}` and `{{port}}`.
+
+```sh
+pnpm exec porto --vars 'PORT|HOST_URL:http://localhost:{{port}};API_PORT' --env
+```
 
 With no variables, `--env` writes `PORTO_BLOCK`.
 

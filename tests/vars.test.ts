@@ -55,6 +55,10 @@ it('rejects invalid names, duplicates and multiline CLI templates', () => {
   expect(() => parseVars('')).toThrow(PortoError);
   expect(() => parseVars('A;A')).toThrow(PortoError);
   expect(() => parseVars('A:{{port}};A')).toThrow(PortoError);
+  expect(() => parseVars('A|A:{{port}}')).toThrow(PortoError);
+  expect(() => parseVars('A|B;B')).toThrow(PortoError);
+  expect(() => parseVars('A||B')).toThrow(PortoError);
+  expect(() => parseVars('A|B={{port}}')).toThrow(PortoError);
   expect(() => parseVars('A;')).toThrow(PortoError);
   expect(() => parseVars('A:line\nnext')).toThrow(PortoError);
   expect(VARS_SCHEMA.safeParse([{ API_PORT: () => '1000' }]).success).toBe(false);

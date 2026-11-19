@@ -224,19 +224,19 @@ it('fails closed on a corrupt registry and leaves its contents intact', async ()
   await expect(runCli(reserveArgs())).rejects.toThrow('Cannot read reservation');
   expect(await readFile(filePath, 'utf8')).toBe('{broken');
 });
-it('maps indexed templates into text stdout and typed JSON files', async () => {
-  const vars = 'API_PORT;CLIENT_HOST:wt{{block}}.localhost;URL:http://localhost:{{port}}/{{port}}';
-  const result = await runCli(reserveArgs('--size', '3', '--vars', vars, '--json-file=ports.json', '--env'));
-  expect(result.stdout).toBe(
-    `API_PORT=${start}\nCLIENT_HOST=wt0.localhost\nURL=http://localhost:${start + 2}/${start + 2}\n`,
-  );
+it('maps grouped names and templates into stdout, JSON, and env files', async () => {
+  const vars = 'API_PORT|CLIENT_HOST:wt{{block}}.localhost;URL:http://localhost:{{port}}/{{port}}|DB_PORT';
+  const result = await runCli(reserveArgs('--vars', vars, '--json-file=ports.json', '--env'));
+  const output = `API_PORT=${start}\nCLIENT_HOST=wt0.localhost\nURL=http://localhost:${start + 1}/${start + 1}\nDB_PORT=${start + 1}\n`;
+  expect(result.stdout).toBe(output);
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
   expect(JSON.parse(jsonOutput)).toEqual({
     API_PORT: start,
     CLIENT_HOST: 'wt0.localhost',
-    URL: `http://localhost:${start + 2}/${start + 2}`,
+    DB_PORT: start + 1,
+    URL: `http://localhost:${start + 1}/${start + 1}`,
   });
-  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toContain(`API_PORT=${start}\n`);
+  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe(output);
 });
 
 it('preserves JSON template strings without requiring env quoting', async () => {
