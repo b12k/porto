@@ -16,4 +16,4 @@ function logError(error: unknown) {
   log([message, instruction].filter(Boolean).join('\n\n'), { borderColor: 'red', title: `[${libraryName}]` });
 }
 
-export { log, logError };
+export { logError };

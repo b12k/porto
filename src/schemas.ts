@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { z } from 'zod';
 
-import type { PortSlot } from './index';
+import type { PortSlot } from './ports';
 
-import { PortoError } from './error';
+import { parseSchema } from './parse';
 import { VAR_VALUES_SCHEMA } from './vars';
 
 const SLOT_HOOK_SCHEMA = z.custom<(slot: PortSlot, ports: Array<number>) => Promise<void> | void>(
@@ -95,12 +95,7 @@ const REGISTRY_SCHEMA = z
 type Registry = z.output<typeof REGISTRY_SCHEMA>;
 
 function parseOptions(options: unknown) {
-  const result = INPUT_OPTIONS_SCHEMA.safeParse(options);
-  if (!result.success) {
-    const details = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
-    throw new PortoError('optionsInvalid', details, { cause: result.error });
-  }
-  return result.data;
+  return parseSchema(INPUT_OPTIONS_SCHEMA, options, 'optionsInvalid');
 }
 
 export { HOOKS_SCHEMA, OPTIONS_SCHEMA, OUTPUT_OPTIONS_SCHEMA, parseOptions, REGISTRY_SCHEMA };

@@ -72,7 +72,7 @@ it('awaits onReserved after exports and registry unlock, including reused slots'
       const reserved = await getSlot();
       const env = await readFile('.env', 'utf8');
       const json = JSON.parse(await readFile('ports.json', 'utf8'));
-      if (reserved?.firstPort !== slot.firstPort || json.index !== slot.index || env !== 'SLOT=' + slot.index + '\\n') {
+      if (reserved?.firstPort !== slot.firstPort || json.SLOT !== slot.index || env !== 'SLOT=' + slot.index + '\\n') {
         throw new Error('Hook ran before reservation or exports completed.');
       }
       await appendFile('reserved.txt', slot.index + ':' + ports.join(',') + '\\n');

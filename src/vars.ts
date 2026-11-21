@@ -2,10 +2,12 @@ import { isPlainObject } from 'es-toolkit';
 import { types } from 'node:util';
 import { z } from 'zod';
 
-import type { PortSlot } from './index';
+import type { PortSlot } from './ports';
 
 import { PortoError } from './error';
+import { parseSchema } from './parse';
 
+type SlotVars = Record<string, number | string>;
 type VarEntry = string | VarFactory;
 type VarEntryResult<Entry extends VarEntry> = Entry extends string
   ? string extends Entry
@@ -75,7 +77,7 @@ function mapVarEntry(entry: VarEntry, slot: Pick<PortSlot, 'firstPort' | 'index'
   }
 }
 
-function mapSlotToVars(slot: Pick<PortSlot, 'firstPort' | 'index'>, entries: Vars) {
+function mapSlotToVars(slot: Pick<PortSlot, 'firstPort' | 'index'>, entries: Vars): SlotVars {
   const environment = new Map<string, number | string>();
   for (const [index, entry] of entries.entries()) {
     for (const [name, value] of mapVarEntry(entry, slot, index)) {
@@ -101,13 +103,7 @@ function parseVar(source: string) {
 }
 
 function parseVarEntries(vars: unknown) {
-  const result = VARS_SCHEMA.safeParse(vars);
-  if (!result.success) {
-    throw new PortoError('mappingInvalid', result.error.issues.map((issue) => issue.message).join('; '), {
-      cause: result.error,
-    });
-  }
-  return result.data;
+  return parseSchema(VARS_SCHEMA, vars, 'mappingInvalid');
 }
 
 function parseVars(source: string) {
@@ -127,4 +123,4 @@ function parseVars(source: string) {
 }
 
 export { assertVarsFit, mapSlotToVars, parseVarEntries, parseVars, VAR_VALUES_SCHEMA, VARS_SCHEMA };
-export type { VarEntry, VarFactory, Vars, VarsResult };
+export type { SlotVars, VarEntry, VarFactory, Vars, VarsResult };

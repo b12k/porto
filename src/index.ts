@@ -1,17 +1,53 @@
-import type { ReservationRecord } from './registry';
+import { rm } from 'node:fs/promises';
 
+import type { BusyPort } from './busy-ports-error';
+import type { PortSlot } from './ports';
+import type { Registry, ReservationRecord } from './registry';
+
+import { BusyPortsError } from './busy-ports-error';
 import { PortoError } from './error';
 import { fetchGitContext, listWorktreePaths } from './git';
-import { buildSlot } from './ports';
-import { updateRegistry } from './registry';
+import { buildSlot, listBusyPorts } from './ports';
+import { fetchRegistry, getRegistryPath, lockRegistryFile, slotEntries, updateRegistry } from './registry';
 import { checkIsExpired, releaseRecord, removeExpiredRecords } from './reserve';
 
-type PortSlot = ReturnType<typeof buildSlot<ReservationRecord>>;
 type ReservationStats = Omit<ReservationRecord, 'worktreeId'> & { index: number; isExpired: boolean };
+
+function assertSlotIndexValid(slotIndex: number) {
+  if (!Number.isSafeInteger(slotIndex) || slotIndex < 0) {
+    throw new PortoError('slotIndexInvalid');
+  }
+}
 
 async function cleanupSlots() {
   const { commonDirectory } = await fetchGitContext();
   return updateRegistry(commonDirectory, (registry) => removeExpiredRecords(registry, Date.now()));
+}
+
+async function destroy(force = false) {
+  const { commonDirectory } = await fetchGitContext();
+  const filePath = getRegistryPath(commonDirectory);
+  const unlock = await lockRegistryFile(filePath);
+  try {
+    const registry = await fetchRegistry(filePath);
+    if (!force) {
+      const busyPorts: Array<BusyPort> = [];
+      for (const { index, record } of slotEntries(registry.slots)) {
+        // Report every busy slot at once instead of failing on the first one.
+        // oxlint-disable-next-line no-await-in-loop
+        const busy = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
+        busyPorts.push(...busy.map((port) => ({ port, slot: index })));
+      }
+      if (busyPorts.length > 0) throw new BusyPortsError(busyPorts);
+    }
+    await rm(filePath, { force: true });
+  } finally {
+    await unlock();
+  }
+}
+
+function findWorktreeSlot(slots: Registry['slots'], worktreeId: string) {
+  return slotEntries(slots).find(({ record }) => record.worktreeId === worktreeId);
 }
 
 async function getAllSlots() {
@@ -19,8 +55,7 @@ async function getAllSlots() {
   const worktreePathsById = await listWorktreePaths(commonDirectory);
   return updateRegistry(commonDirectory, ({ slots }) => {
     const now = Date.now();
-    return Object.entries(slots).flatMap(([key, record]) => {
-      const index = Number(key);
+    return slotEntries(slots).flatMap(({ index, record }) => {
       const { worktreeId, ...slotFields } = record;
       const worktreePath = worktreePathsById.get(worktreeId) ?? record.worktreePath;
       return [
@@ -31,32 +66,37 @@ async function getAllSlots() {
 }
 
 async function getSlot(slotIndex?: number) {
-  if (slotIndex !== undefined && (!Number.isSafeInteger(slotIndex) || slotIndex < 0)) {
-    throw new PortoError('slotIndexInvalid');
-  }
+  if (slotIndex !== undefined) assertSlotIndexValid(slotIndex);
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, ({ slots }) => {
     if (slotIndex !== undefined) {
       const record = slots[slotIndex];
       return record ? buildSlot(record, slotIndex) : undefined;
     }
-    const found = Object.entries(slots).find(([, record]) => record.worktreeId === worktreeId);
-    return found ? buildSlot(found[1], Number(found[0])) : undefined;
+    const found = findWorktreeSlot(slots, worktreeId);
+    return found ? buildSlot(found.record, found.index) : undefined;
   });
 }
 
 async function releaseAllSlots(force = false) {
   const { commonDirectory } = await fetchGitContext();
-  return updateRegistry(commonDirectory, async (registry) => {
-    const releasedSlots: Array<PortSlot> = [];
-    for (const [key, record] of Object.entries(registry.slots)) {
-      const index = Number(key);
-      // Keep every release in one transaction; a busy slot leaves the file unchanged.
-      // oxlint-disable-next-line no-await-in-loop
-      releasedSlots.push(await releaseRecord(registry, index, record, force));
+  const { busyPorts, releasedSlots } = await updateRegistry(commonDirectory, async (registry) => {
+    const freedSlots: Array<PortSlot> = [];
+    const occupiedPorts: Array<BusyPort> = [];
+    for (const { index, record } of slotEntries(registry.slots)) {
+      try {
+        // Free every releasable slot instead of failing on the first busy one.
+        // oxlint-disable-next-line no-await-in-loop
+        freedSlots.push(await releaseRecord(registry, index, record, force));
+      } catch (error) {
+        if (!(error instanceof BusyPortsError)) throw error;
+        occupiedPorts.push(...error.ports);
+      }
     }
-    return releasedSlots;
+    return { busyPorts: occupiedPorts, releasedSlots: freedSlots };
   });
+  if (busyPorts.length > 0) throw new BusyPortsError(busyPorts, releasedSlots);
+  return releasedSlots;
 }
 
 async function releaseSlot(force?: boolean): Promise<PortSlot | undefined>;
@@ -64,26 +104,25 @@ async function releaseSlot(slotIndex: number | undefined, force?: boolean): Prom
 async function releaseSlot(slotIndex?: boolean | number, force = false) {
   const selected = typeof slotIndex === 'boolean' ? undefined : slotIndex;
   const forced = typeof slotIndex === 'boolean' ? slotIndex : force;
-  if (selected !== undefined && (!Number.isSafeInteger(selected) || selected < 0)) {
-    throw new PortoError('slotIndexInvalid');
-  }
+  if (selected !== undefined) assertSlotIndexValid(selected);
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, (registry) => {
     if (selected !== undefined) {
       const record = registry.slots[selected];
       return record ? releaseRecord(registry, selected, record, forced) : undefined;
     }
-    const found = Object.entries(registry.slots).find(([, record]) => record.worktreeId === worktreeId);
-    return found ? releaseRecord(registry, Number(found[0]), found[1], forced) : undefined;
+    const found = findWorktreeSlot(registry.slots, worktreeId);
+    return found ? releaseRecord(registry, found.index, found.record, forced) : undefined;
   });
 }
 
-export { cleanupSlots, getAllSlots, getSlot, releaseAllSlots, releaseSlot };
-export type { PortSlot, ReservationStats };
+export { cleanupSlots, destroy, getAllSlots, getSlot, releaseAllSlots, releaseSlot };
+export type { ReservationStats };
 export { BusyPortsError } from './busy-ports-error';
 export { defineConfig } from './config';
 export type { PortoConfig } from './config';
 export { PortoError } from './error';
+export type { PortSlot } from './ports';
 export { reserve } from './reserve';
 export type { ReserveOptions } from './reserve';
 export type { VarFactory, Vars } from './vars';

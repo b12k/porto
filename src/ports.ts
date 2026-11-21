@@ -1,7 +1,11 @@
 import { createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
 
+import type { ReservationRecord } from './registry';
+
 import { PortoError } from './error';
+
+type PortSlot = ReturnType<typeof buildSlot<ReservationRecord>>;
 
 function buildSlot<Slot extends { firstPort: number; lastPort: number }>(record: Slot, index: number) {
   return {
@@ -76,3 +80,4 @@ async function checkHasBusyPort(start: number, end: number, host?: string) {
 }
 
 export { buildSlot, checkHasBusyPort, listBusyPorts };
+export type { PortSlot };

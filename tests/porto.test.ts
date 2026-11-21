@@ -262,7 +262,7 @@ it('preserves multiline env values and numeric filenames', async () => {
   await writeFile(envPath, 'TEXT="line one\nSLOT=inside\nline three"\nSLOT=9 # keep\n');
   await runCli(reserveArgs('--json-file=000', '--env-file=001'));
   const jsonOutput = await readFile(path.join(repositoryPath, '000'), 'utf8');
-  expect(JSON.parse(jsonOutput)).toEqual({ firstPort: start, index: 0, lastPort: start + 1, SLOT: 0 });
+  expect(JSON.parse(jsonOutput)).toEqual({ SLOT: 0 });
   expect(await readFile(envPath, 'utf8')).toBe('TEXT="line one\nSLOT=inside\nline three"\nSLOT=0 # keep\n');
 });
 

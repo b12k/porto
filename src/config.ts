@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { PortoError } from './error';
+import { parseSchema } from './parse';
 import { HOOKS_SCHEMA, OPTIONS_SCHEMA, OUTPUT_OPTIONS_SCHEMA } from './schemas';
 import { VARS_SCHEMA } from './vars';
 
@@ -65,12 +66,7 @@ function defineConfig(config: PortoConfig) {
 }
 
 function parseConfig(config: unknown) {
-  const result = CONFIG_SCHEMA.safeParse(config);
-  if (!result.success) {
-    const details = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
-    throw new PortoError('configInvalid', details, { cause: result.error });
-  }
-  const settings = result.data;
+  const settings = parseSchema(CONFIG_SCHEMA, config, 'configInvalid');
   if (settings.envFile !== undefined) settings.env ??= true;
   return settings;
 }

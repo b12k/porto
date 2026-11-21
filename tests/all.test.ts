@@ -104,7 +104,7 @@ it('releases occupied array positions without treating free slots as reservation
   expect(JSON.parse(contents)).toEqual({ portsPerSlot: 2, slots: {}, startPort: start });
 });
 
-it('keeps all slots on a busy-port failure and runs hooks once per slot after a successful release', async () => {
+it('releases free slots on a busy-port failure and runs hooks for every freed slot', async () => {
   await reserveSlots();
   await writeFile(
     path.join(directoryPath, 'porto.config.ts'),
@@ -114,17 +114,21 @@ it('keeps all slots on a busy-port failure and runs hooks once per slot after a 
     } };`,
   );
   const registryPath = path.join(directoryPath, '.git', 'porto-registry.json');
-  const previousContents = await readFile(registryPath, 'utf8');
   const server = createServer();
   server.listen({ host: '127.0.0.1', port: start + 2 });
   await once(server, 'listening');
   try {
+    // The free slot is saved as released and hooked despite the busy one.
+    await expect(runCli(['release', '--all'])).rejects.toThrow('Cannot release reservations while ports are in use.');
+    expect(JSON.parse(await readFile(registryPath, 'utf8'))).toMatchObject({
+      slots: { 1: { vars: { API_PORT: start + 2 } } },
+    });
+    expect(await readFile(path.join(directoryPath, 'released.jsonl'), 'utf8')).toBe(`{"index":0,"ports":[${start}]}\n`);
     const source = 'try { await releaseAllSlots(); } catch (error) { console.log(JSON.stringify(error.ports)); }';
     expect(await runApi(source)).toEqual([{ port: start + 2, slot: 1 }]);
-    expect(await readFile(registryPath, 'utf8')).toBe(previousContents);
-    await expect(runCli(['release', '--all'])).rejects.toThrow('Cannot release reservations while ports are in use.');
-    expect(await readFile(registryPath, 'utf8')).toBe(previousContents);
-    await expect(readFile(path.join(directoryPath, 'released.jsonl'))).rejects.toThrow(/ENOENT/u);
+    expect(JSON.parse(await readFile(registryPath, 'utf8'))).toMatchObject({
+      slots: { 1: { vars: { API_PORT: start + 2 } } },
+    });
   } finally {
     const closed = once(server, 'close');
     server.close();
