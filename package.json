@@ -1,6 +1,6 @@
 {
   "name": "@b12k/porto",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Port range allocator for git worktrees",
   "keywords": [
     "cli",
@@ -102,7 +102,7 @@
     "oxlint-tsgolint": "7.0.2007",
     "release-it": "21.1.2",
     "tsx": "4.23.15",
-    "type-fest": "6.0.2",
+    "type-fest": "6.0.3",
     "typescript": "7.0.2"
   },
   "engines": {
