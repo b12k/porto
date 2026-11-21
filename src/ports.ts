@@ -3,18 +3,19 @@ import { networkInterfaces } from 'node:os';
 
 import { PortoError } from './error';
 
-function buildBlock(record: { index: number; size: number; start: number }) {
-  const start = record.start + record.index * record.size;
+function buildSlot<Slot extends { firstPort: number; lastPort: number }>(record: Slot, index: number) {
   return {
-    end: start + record.size - 1,
+    ...record,
     getPort(offset = 0) {
-      if (!Number.isInteger(offset) || offset < 0 || offset >= record.size) {
-        throw new PortoError('offsetInvalid', `offset must be an integer between 0 and ${record.size - 1}.`);
+      if (!Number.isInteger(offset) || offset < 0 || record.firstPort + offset > record.lastPort) {
+        throw new PortoError(
+          'offsetInvalid',
+          `offset must be an integer between 0 and ${record.lastPort - record.firstPort}.`,
+        );
       }
-      return start + offset;
+      return record.firstPort + offset;
     },
-    index: record.index,
-    start,
+    index,
   };
 }
 
@@ -30,10 +31,7 @@ function checkIsAddressAvailable(port: number, host: string, isAutomatic: boolea
       } else reject(error);
     });
     server.listen({ exclusive: true, host, ipv6Only: true, port }, () => {
-      server.close((error) => {
-        if (error) reject(error);
-        else resolve(true);
-      });
+      server.close(() => resolve(true));
     });
   });
 }
@@ -53,7 +51,7 @@ function getProbeHosts() {
 async function listBusyPorts(
   start: number,
   end: number,
-  { host, limit = Number.POSITIVE_INFINITY }: { host?: string | undefined; limit?: number } = {},
+  { host, stopAtFirst = false }: { host?: string | undefined; stopAtFirst?: boolean } = {},
 ) {
   const busyPorts: Array<number> = [];
   const hosts = host === undefined ? getProbeHosts() : [host];
@@ -64,7 +62,7 @@ async function listBusyPorts(
       // oxlint-disable-next-line no-await-in-loop
       if (!(await checkIsAddressAvailable(port, probeHost, host === undefined))) {
         busyPorts.push(port);
-        if (busyPorts.length === limit) return busyPorts;
+        if (stopAtFirst) return busyPorts;
         break;
       }
     }
@@ -73,8 +71,8 @@ async function listBusyPorts(
 }
 
 async function checkHasBusyPort(start: number, end: number, host?: string) {
-  const busyPorts = await listBusyPorts(start, end, { host, limit: 1 });
+  const busyPorts = await listBusyPorts(start, end, { host, stopAtFirst: true });
   return busyPorts.length > 0;
 }
 
-export { buildBlock, checkHasBusyPort, listBusyPorts };
+export { buildSlot, checkHasBusyPort, listBusyPorts };

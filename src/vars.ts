@@ -2,7 +2,7 @@ import { isPlainObject } from 'es-toolkit';
 import { types } from 'node:util';
 import { z } from 'zod';
 
-import type { PortBlock } from './index';
+import type { PortSlot } from './index';
 
 import { PortoError } from './error';
 
@@ -14,7 +14,7 @@ type VarEntryResult<Entry extends VarEntry> = Entry extends string
   : Entry extends VarFactory
     ? ReturnType<Entry>
     : never;
-type VarFactory = (block: number, port: number, index: number) => Record<string, number | string>;
+type VarFactory = (slotIndex: number, port: number, index: number) => Record<string, number | string>;
 type Vars = ReadonlyArray<VarEntry>;
 type VarsResult<Entries extends Vars> = Entries extends readonly [
   infer Entry extends VarEntry,
@@ -34,6 +34,16 @@ const VAR_RESULT_SCHEMA = z
   .transform((variables) => Object.entries(variables))
   .pipe(z.array(VAR_RESULT_ENTRY_SCHEMA));
 
+const VAR_VALUES_SCHEMA = VAR_RESULT_SCHEMA.transform((entries) => Object.fromEntries(entries))
+  .refine(
+    (variables) => {
+      const slotIndex = variables['PORTO_SLOT'];
+      return typeof slotIndex === 'number' && Number.isSafeInteger(slotIndex) && slotIndex >= 0;
+    },
+    { message: 'PORTO_SLOT must be a non-negative integer.', path: ['PORTO_SLOT'] },
+  )
+  .transform((variables) => ({ ...variables, PORTO_SLOT: Number(variables['PORTO_SLOT']) }));
+
 const VARS_SCHEMA = z.array(z.union([VAR_NAME_SCHEMA, VAR_FACTORY_SCHEMA])).refine(
   (entries) => {
     const names = entries.filter((entry) => typeof entry === 'string');
@@ -44,15 +54,15 @@ const VARS_SCHEMA = z.array(z.union([VAR_NAME_SCHEMA, VAR_FACTORY_SCHEMA])).refi
 
 function assertVarsFit(varsCount: number, size: number) {
   if (varsCount > size) {
-    throw new PortoError('mappingInvalid', 'Vars contain more entries than the block contains.');
+    throw new PortoError('mappingInvalid', 'Vars contain more entries than the slot contains.');
   }
 }
 
-function mapVarEntry(entry: VarEntry, block: PortBlock, index: number) {
-  const port = block.getPort(index);
+function mapVarEntry(entry: VarEntry, slot: Pick<PortSlot, 'firstPort' | 'index'>, index: number) {
+  const port = slot.firstPort + index;
   if (typeof entry === 'string') return [[entry, port] as const];
   try {
-    const variables: unknown = entry(block.index, port, index);
+    const variables: unknown = entry(slot.index, port, index);
     if (types.isPromise(variables)) {
       variables.catch(() => {
         // Async factories are rejected below; observe their errors without awaiting them.
@@ -68,10 +78,10 @@ function mapVarEntry(entry: VarEntry, block: PortBlock, index: number) {
   }
 }
 
-function mapBlockToVars(block: PortBlock, entries: Vars) {
+function mapSlotToVars(slot: Pick<PortSlot, 'firstPort' | 'index'>, entries: Vars) {
   const environment = new Map<string, number | string>();
   for (const [index, entry] of entries.entries()) {
-    for (const [name, value] of mapVarEntry(entry, block, index)) {
+    for (const [name, value] of mapVarEntry(entry, slot, index)) {
       if (environment.has(name)) {
         throw new PortoError('mappingInvalid', `Variable names must be unique. Duplicate: ${name}.`);
       }
@@ -109,15 +119,15 @@ function parseVars(source: string) {
   return groups.map<VarEntry>((group) => {
     const [firstVar] = group;
     if (group.length === 1 && firstVar && firstVar.template === undefined) return firstVar.name;
-    return (block, port) =>
+    return (slotIndex, port) =>
       Object.fromEntries(
         group.map(({ name, template }) => [
           name,
-          template?.replaceAll('{{block}}', String(block)).replaceAll('{{port}}', String(port)) ?? port,
+          template?.replaceAll('{{slot}}', String(slotIndex)).replaceAll('{{port}}', String(port)) ?? port,
         ]),
       );
   });
 }
 
-export { assertVarsFit, mapBlockToVars, parseVarEntries, parseVars, VARS_SCHEMA };
+export { assertVarsFit, mapSlotToVars, parseVarEntries, parseVars, VAR_VALUES_SCHEMA, VARS_SCHEMA };
 export type { VarEntry, VarFactory, Vars, VarsResult };

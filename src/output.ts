@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
 
-import type { PortBlock, ReservationStats } from './index';
+import type { PortSlot, ReservationStats } from './index';
 
 import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
@@ -39,22 +39,21 @@ async function assertExportPaths(exportPaths: Array<string>, registryPath: strin
   ]);
   const registryPaths = new Set([registryPath, registryTarget].map((filePath) => normalizePathForComparison(filePath)));
   const lockPaths = [lockPath, lockTarget].map((filePath) => normalizePathForComparison(filePath));
-  const protectedIdentities = new Set(
-    await Promise.all([fetchFileIdentity(registryTarget), fetchFileIdentity(lockTarget)]),
+  const [registryIdentity, lockIdentity, ...exportIdentities] = await Promise.all(
+    [registryTarget, lockTarget, ...exportPaths].map((filePath) => fetchFileIdentity(filePath)),
   );
-  protectedIdentities.delete(false);
-  const exportIdentities = await Promise.all(exportPaths.map((filePath) => fetchFileIdentity(filePath)));
+  const hasProtectedPath = exportPaths.some((filePath) => {
+    const normalizedPath = normalizePathForComparison(filePath);
+    return (
+      registryPaths.has(normalizedPath) ||
+      lockPaths.some(
+        (targetPath) => normalizedPath === targetPath || normalizedPath.startsWith(`${targetPath}${path.sep}`),
+      )
+    );
+  });
   if (
-    exportPaths.some((filePath) => {
-      const normalizedPath = normalizePathForComparison(filePath);
-      return (
-        registryPaths.has(normalizedPath) ||
-        lockPaths.some(
-          (targetPath) => normalizedPath === targetPath || normalizedPath.startsWith(`${targetPath}${path.sep}`),
-        )
-      );
-    }) ||
-    exportIdentities.some((identity) => protectedIdentities.has(identity))
+    hasProtectedPath ||
+    exportIdentities.some((identity) => identity && (identity === registryIdentity || identity === lockIdentity))
   ) {
     throw new PortoError('exportInvalid', 'The Porto registry and its lock are reserved.');
   }
@@ -101,9 +100,11 @@ function formatEnvironment(environment: Environment) {
     .join('\n');
 }
 
-function formatReserveOutput(block: PortBlock, environment: Environment | undefined, isJson: boolean) {
-  if (isJson) return JSON.stringify(environment ?? { end: block.end, index: block.index, start: block.start });
-  return environment ? formatEnvironment(environment) : String(block.index);
+function formatReserveOutput(slot: PortSlot, environment: Environment | undefined, isJson: boolean) {
+  if (isJson) {
+    return JSON.stringify(environment ?? { firstPort: slot.firstPort, index: slot.index, lastPort: slot.lastPort });
+  }
+  return environment ? formatEnvironment(environment) : String(slot.index);
 }
 
 function formatTable(headers: Array<string>, rows: Array<Array<string>>) {
@@ -121,12 +122,12 @@ function formatTable(headers: Array<string>, rows: Array<Array<string>>) {
 function formatStatsTable(reservations: Array<ReservationStats>) {
   const now = Date.now();
   return formatTable(
-    ['BLOCK', 'PORTS', 'WORKTREE', 'PATH', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
+    ['SLOT', 'PORTS', 'WORKTREE', 'PATH', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
     reservations.map((record) => [
       String(record.index),
-      `${record.start}-${record.end}`,
-      path.basename(record.worktree) || record.worktree,
-      record.worktree,
+      `${record.firstPort}-${record.lastPort}`,
+      path.basename(record.worktreePath) || record.worktreePath,
+      record.worktreePath,
       formatDistance(record.lastUsedAt, now, { addSuffix: true }),
       String(record.idleTtlMinutes),
       record.keep ? 'yes' : 'no',
@@ -168,8 +169,14 @@ async function updateEnvironmentFile(filePath: string, environment: Environment,
   }
 }
 
-async function writeReserveJsonFile(filePath: string, block: PortBlock, environment: Environment | undefined) {
-  await writeFileAtomically(filePath, `${formatReserveOutput(block, environment, true)}\n`);
+async function writeReserveJsonFile(filePath: string, slot: PortSlot, environment: Environment | undefined) {
+  const variables = environment ?? {
+    firstPort: slot.firstPort,
+    index: slot.index,
+    lastPort: slot.lastPort,
+    ...slot.vars,
+  };
+  await writeFileAtomically(filePath, `${JSON.stringify(variables)}\n`);
 }
 
 export {

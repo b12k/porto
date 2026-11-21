@@ -1,39 +1,29 @@
-import type { SetRequired } from 'type-fest';
-
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
 
-import type { ReserveOptions } from './index';
+import type { Registry } from './schemas';
 
 import { PortoError } from './error';
 import { checkIsFileMissing, writeFileAtomically } from './files';
 import { REGISTRY_SCHEMA } from './schemas';
 
-type ReservationRecord = SetRequired<Omit<ReserveOptions, 'vars'>, 'idleTtlMinutes' | 'size' | 'start'> & {
-  index: number;
-  keep: boolean;
-  lastUsedAt: string;
-  ports: Array<number>;
-  worktree: string;
-  worktreeId: string;
-};
+async function fetchRegistry(filePath: string): Promise<Registry> {
+  try {
+    return REGISTRY_SCHEMA.parse(JSON.parse(await readFile(filePath, 'utf8')));
+  } catch (error) {
+    if (checkIsFileMissing(error)) return { portsPerSlot: 10, slots: [], startPort: 10_000 };
+    throw new PortoError('registryInvalid', filePath, { cause: error });
+  }
+}
 
 function getRegistryPath(commonDirectory: string) {
   return path.join(commonDirectory, 'porto-registry.json');
 }
 
-async function listReservations(filePath: string) {
-  try {
-    return REGISTRY_SCHEMA.parse(JSON.parse(await readFile(filePath, 'utf8')));
-  } catch (error) {
-    if (checkIsFileMissing(error)) return [];
-    throw new PortoError('registryInvalid', filePath, { cause: error });
-  }
-}
-
-async function writeReservations(filePath: string, records: Array<ReservationRecord>, previousContents: string) {
-  const contents = JSON.stringify(records);
+async function writeRegistry(filePath: string, registry: Registry, previousContents: string) {
+  while (registry.slots.at(-1) === null) registry.slots.pop();
+  const contents = JSON.stringify(registry);
   if (contents !== previousContents) {
     await writeFileAtomically(filePath, `${contents}\n`);
   }
@@ -41,7 +31,7 @@ async function writeReservations(filePath: string, records: Array<ReservationRec
 
 async function updateRegistry<Result>(
   commonDirectory: string,
-  handleRecords: (records: Array<ReservationRecord>) => Promise<Result> | Result,
+  handleRegistry: (registry: Registry) => Promise<Result> | Result,
 ) {
   const filePath = getRegistryPath(commonDirectory);
   const unlock = await lockfile.lock(filePath, {
@@ -49,10 +39,10 @@ async function updateRegistry<Result>(
     retries: { factor: 1, maxTimeout: 100, minTimeout: 100, retries: 200 },
   });
   try {
-    const records = await listReservations(filePath);
-    const previousContents = JSON.stringify(records);
-    const result = await handleRecords(records);
-    await writeReservations(filePath, records, previousContents);
+    const registry = await fetchRegistry(filePath);
+    const previousContents = JSON.stringify(registry);
+    const result = await handleRegistry(registry);
+    await writeRegistry(filePath, registry, previousContents);
     return result;
   } finally {
     await unlock();
@@ -60,4 +50,4 @@ async function updateRegistry<Result>(
 }
 
 export { getRegistryPath, updateRegistry };
-export type { ReservationRecord };
+export type { Registry, ReservationRecord } from './schemas';

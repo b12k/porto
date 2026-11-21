@@ -2,63 +2,129 @@
   <img src="./porto.png" alt="Porto banner with a tree formed from Ethernet cables" />
 </p>
 
-# 🌳 :porto
+# 🌳 Porto
 
-Porto reserves TCP port blocks for Git checkouts and worktrees.
+💪 **Port reservations on steroids.**
 
-## 🚀 Start
+Porto reserves a range of TCP ports, called a slot, for each Git checkout or worktree.
+It checks for port conflicts and saves the slot for the next run.
 
-Install Node.js 24 or later and Git 2.36 or later.
+🧹 **It can haz cleanups.** When you reserve ports, Porto removes expired reservations if all their ports are free.
+
+## 🚀 Install
+
+**npm**
+
+```sh
+npm install -D @b12k/porto
+```
+
+**pnpm**
 
 ```sh
 pnpm add -D @b12k/porto
-pnpm exec porto --vars API_PORT --env
 ```
 
-Porto writes `API_PORT` to `.env`. Run the same command again to reuse the block.
+**Yarn**
 
-| Worktree | Block | Ports       |
-| -------- | ----: | ----------- |
-| Main     |     0 | 10000–10009 |
-| Feature  |     1 | 10010–10019 |
+```sh
+yarn add -D @b12k/porto
+```
 
-## 🖥️ Commands
+**Bun**
 
-Run each command with `pnpm exec porto`. `reserve` is the default command.
+```sh
+bun add --dev @b12k/porto
+```
 
-| Command   | Action                                                    |
-| --------- | --------------------------------------------------------- |
-| `reserve` | Reserve a block and print its index or variables.         |
-| `current` | Show the blocks for this checkout.                        |
-| `stats`   | Show all reservations for this repository.                |
-| `release` | Release this checkout's blocks when their ports are free. |
-| `cleanup` | Remove expired reservations when their ports are free.    |
+## Use Porto
 
-| `reserve` option                        | Action                                                       |
-| --------------------------------------- | ------------------------------------------------------------ |
-| `--start <port>`                        | Set the first port of the range. Default `10000`.            |
-| `--host <host>`                         | Check this host for busy ports. Default local addresses.     |
-| `--size <count>`                        | Set the ports per block. Default `10`.                       |
-| `--idle <minutes>`                      | Set the idle time limit. Default `60`.                       |
-| `--keep` / `--no-keep`                  | Turn idle cleanup off or on for the block.                   |
-| `--vars <entries>` / `--no-vars`        | Set or clear the variable list.                              |
-| `--env` / `--no-env`                    | Turn env file output on or off. Default off. File `.env`.    |
-| `--env-file <file>`                     | Set the env file path and turn on env output.                |
-| `--json-file <file>` / `--no-json-file` | Set or clear the JSON output file.                           |
-| `--json`                                | Print JSON to stdout. Also works with `current` and `stats`. |
-| `--silent` / `--no-silent`              | Hide or show the reservation result on stdout.               |
+- [CLI](#cli) - Pass options when you run `pnpm porto`.
+- [Config](#config) - Save settings in `porto.config.ts` or `porto.config.js`.
+- [API](#api) - Add `@b12k/porto` as a dependency and call `reserve()` from your code.
+
+### CLI
+
+```css
+porto [reserve?] [options]
+porto show [slot-number?] [--all?]
+porto release [slot-number?] [--all?]
+porto cleanup
+```
+
+#### Commands
+
+| Command   | Action                                                                      |
+| --------- | --------------------------------------------------------------------------- |
+| `reserve` | _**(default)**_ Allocate a port slot and print its index or variables.      |
+| `show`    | Show a slot. Use `--all` to show all slots.                                 |
+| `release` | Release a slot. Use `--all` to release all slots when their ports are free. |
+| `cleanup` | Remove expired reservations when their ports are free.                      |
+
+#### `reserve` options
+
+| Option                                  | Default           | Action                                         |
+| --------------------------------------- | ----------------- | ---------------------------------------------- |
+| `--start <port>`                        | `10000`           | Set the first port of the range.               |
+| `--host <host>`                         | Local addresses   | Check this host for busy ports.                |
+| `--size <count>`                        | `10`              | Set the number of ports per slot.              |
+| `--idle <minutes>`                      | 60 minutes        | Set the idle time limit.                       |
+| `--keep` / `--no-keep`                  | Off for new slots | Keep the slot during idle cleanup.             |
+| `--vars <entries>` / `--no-vars`        | None              | Set or clear the variable list.                |
+| `--env` / `--no-env`                    | Off               | Turn env file output on or off.                |
+| `--env-file <file>`                     | `.env`            | Set the env file path and turn on env output.  |
+| `--json-file <file>` / `--no-json-file` | Off               | Set or clear the JSON output file.             |
+| `--json`                                | Off               | Print JSON to stdout. Also works with `show`.  |
+| `--silent` / `--no-silent`              | Off               | Hide or show the reservation result on stdout. |
 
 Use `-h` or `--help` for help. Use `-V` or `--version` for the version.
 
-Use `|` to share a port between variables and `;` to advance to the next port. Use `NAME` for a port number or `NAME=template` for text. Templates accept `{{block}}` and `{{port}}`.
+##### `--vars` template syntax
+
+Use `;` to move to the next port and `|` to share the current port. Use `NAME` for a port number or `NAME=template` for text. Templates accept `{{slot}}` and `{{port}}`.
+
+##### Write to files
 
 ```sh
-pnpm exec porto --vars 'PORT|HOST_URL=http://localhost:{{port}};API_PORT' --env
+pnpm porto --vars "CLIENT_PORT|HOST_URL=http://localhost:{{port}};API_PORT" --env-file .env.local --json-file env.json
 ```
 
-With no variables, `--env` writes `PORTO_BLOCK`.
+Both files always include `PORTO_SLOT`, the slot index. If the first slot is free, Porto writes these files.
 
-## ⚙️ Config
+`.env.local`
+
+```dotenv
+CLIENT_PORT=10000
+HOST_URL=http://localhost:10000
+API_PORT=10001
+PORTO_SLOT=0
+```
+
+`env.json`
+
+```json
+{ "CLIENT_PORT": 10000, "HOST_URL": "http://localhost:10000", "API_PORT": 10001, "PORTO_SLOT": 0 }
+```
+
+Run the same command again in this worktree to reuse its slot. A second worktree gets its own slot.
+
+`--start` and `--size` are shared by all worktrees. Omit them to reuse the saved settings. Release all slots before changing them.
+
+| Worktree | Slot | Ports       |
+| -------- | ---: | ----------- |
+| Main     |    0 | 10000-10009 |
+| Feature  |    1 | 10010-10019 |
+
+#### `show` and `release` options
+
+| Argument or option | Default              | Action                                |
+| ------------------ | -------------------- | ------------------------------------- |
+| `[slot-number]`    | This checkout's slot | Select a slot by index.               |
+| `--all`            | Off                  | Select all slots for this repository. |
+
+Use a slot number or `--all`. If a port is busy, `release --all` keeps every slot.
+
+### Config
 
 The CLI loads config for `reserve` and `release`. Create `porto.config.ts` or `porto.config.js` in your checkout. Porto searches from the current directory to the checkout root. If both files are in one directory, Porto uses the TypeScript file.
 
@@ -77,98 +143,99 @@ export default defineConfig({
   envFile: '.env.local',
   jsonFile: 'ports.json',
   silent: false,
-  vars: ['PORT', (_block, port) => ({ PORT_2: port, HOST_NAME: `https://localhost:${port}` }), 'DB_PORT'],
-  onReserved(block, ports) {
-    console.error(`Reserved block ${block.index} with ports ${ports.join(', ')}`);
+  vars: ['PORT', (_slot, port) => ({ PORT_2: port, HOST_NAME: `https://localhost:${port}` }), 'DB_PORT'],
+  onReserved(slot, ports) {
+    console.error(`Reserved slot ${slot.index} with ports ${ports.join(', ')}`);
   },
-  onReleased(block, ports) {
-    console.error(`Released block ${block.index} with ports ${ports.join(', ')}`);
+  onReleased(slot, ports) {
+    console.error(`Released slot ${slot.index} with ports ${ports.join(', ')}`);
   },
 });
 ```
 
 All properties are optional.
 
-| Property         | Default                | Effect                                                                                       |
-| ---------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
-| `start`          | `10000`                | Set the first port of the candidate range.                                                   |
-| `size`           | `10`                   | Set the number of ports per block.                                                           |
-| `host`           | Local addresses        | Check a specific host for busy ports. Porto saves the host for `release` and `cleanup`.      |
-| `idleTtlMinutes` | `60`                   | Set the idle time limit in minutes. A new `reserve` call refreshes the timer.                |
-| `keep`           | `false` for new blocks | Keep a block during idle cleanup. Omit to keep its current setting. Set `false` to clear it. |
-| `env`            | `false`                | Write variables to an env file. With no variables, write `PORTO_BLOCK`.                      |
-| `envFile`        | `.env`                 | Set the env file path. An explicit path enables `env` unless you set `env: false`.           |
-| `jsonFile`       | `false`                | Save variables or block details to a JSON file. Use a path to enable it.                     |
-| `silent`         | `false`                | Hide the `reserve` result on stdout. Porto still writes requested files and reports errors.  |
-| `vars`           | Unset                  | Assign one port per entry. Use a name for a port number or a function for several values.    |
-| `onReserved`     | Unset                  | Run after Porto saves the block and writes the requested files.                              |
-| `onReleased`     | Unset                  | Run once per block freed by `release`.                                                       |
+| Property         | Default               | Effect                                                                                      |
+| ---------------- | --------------------- | ------------------------------------------------------------------------------------------- |
+| `start`          | `10000`               | Set the first port of the candidate range.                                                  |
+| `size`           | `10`                  | Set the number of ports per slot.                                                           |
+| `host`           | Local addresses       | Check a specific host for busy ports. Porto saves the host for `release` and `cleanup`.     |
+| `idleTtlMinutes` | `60`                  | Set the idle time limit in minutes. A new `reserve` call refreshes the timer.               |
+| `keep`           | `false` for new slots | Keep a slot during idle cleanup. Omit to keep its current setting. Set `false` to clear it. |
+| `env`            | `false`               | Write variables and `PORTO_SLOT` to an env file.                                            |
+| `envFile`        | `.env`                | Set the env file path. An explicit path enables `env` unless you set `env: false`.          |
+| `jsonFile`       | `false`               | Save variables or slot details with `PORTO_SLOT` to a JSON file. Use a path to enable it.   |
+| `silent`         | `false`               | Hide the `reserve` result on stdout. Porto still writes requested files and reports errors. |
+| `vars`           | Unset                 | Assign one port per entry. Use a name for a port number or a function for several values.   |
+| `onReserved`     | Unset                 | Run after Porto saves the slot and writes the requested files.                              |
+| `onReleased`     | Unset                 | Run once per slot freed by `release`.                                                       |
 
 Relative paths in config start at the config directory. Relative paths in flags start at the current directory.
 
-A `vars` function receives `(blockIndex, port, entryIndex)`, where `entryIndex` starts at zero. Return an object with string or number values. In the example, `PORT_2` and `HOST_NAME` use the same port.
+A `vars` function receives `(slotIndex, port, entryIndex)`, where `entryIndex` starts at zero. Return an object with string or number values. In the example, `PORT_2` and `HOST_NAME` use the same port.
 
-Both hooks receive `(block, ports)`, where `ports` lists the ports assigned to that block. Hooks can return a promise. Porto runs release hooks in parallel.
+Both hooks receive `(slot, ports)`, where `ports` lists the ports assigned to that slot. Hooks can return a promise.
 
-## 📦 API
+### API
 
-Run the API inside a Git checkout. It uses the options you pass in code and the built-in defaults.
+Run the API inside a Git checkout.
 
-### Get ports by offset
+#### Get ports by offset
 
 ```js
 import { reserve } from '@b12k/porto';
 
-const block = await reserve();
-const firstPort = block.getPort();
-const secondPort = block.getPort(1);
+const slot = await reserve();
+const firstPort = slot.getPort();
+const secondPort = slot.getPort(1);
 ```
 
-`reserve()` returns `index`, `start`, `end`, `getPort(offset = 0)`, `ports`, and `vars`. The bounds are inclusive. Offsets start at zero and must fit inside the block.
+`reserve()` returns the saved slot with `getPort(offset = 0)`. Offsets start at zero and must fit inside the slot.
 
-### Get ports by name
+`firstPort` and `lastPort` are the slot's inclusive bounds.
+
+#### Get ports by name
 
 ```js
 import { reserve } from '@b12k/porto';
 
-const block = await reserve({ start: 10_000, size: 5, vars: ['PORT', 'API_PORT'] });
-const { PORT, API_PORT } = block.vars;
-const DB_PORT = block.getPort(2); // 10002 if the first block is free
+const slot = await reserve({ start: 10_000, size: 5, vars: ['PORT', 'API_PORT'] });
+const { PORT, API_PORT } = slot.vars;
+const DB_PORT = slot.getPort(2); // 10002 if the first slot is free
 ```
 
-TypeScript infers `PORT` and `API_PORT` as `number`. `block.vars` contains this call's named values and defaults to `{}`. `block.ports` lists the ports assigned through `vars` across calls. `getPort()` reads a port by offset.
+TypeScript infers `PORT` and `API_PORT` as `number`. `slot.vars` contains this call's named values and the built-in `PORTO_SLOT`. `slot.ports` lists the ports assigned through `vars` across calls. `getPort()` reads a port by offset.
 
-### Share a port between variables
+#### Share a port between variables
 
 ```js
 import { reserve } from '@b12k/porto';
 
-const block = await reserve({
+const slot = await reserve({
   start: 10_000,
   size: 2,
   host: '127.0.0.1',
   idleTtlMinutes: 30,
   keep: true,
-  vars: ['PORT', (_block, port) => ({ API_PORT: port, API_URL: `http://localhost:${port}` })],
+  vars: ['PORT', (_slot, port) => ({ API_PORT: port, API_URL: `http://localhost:${port}` })],
 });
-const { API_PORT, API_URL } = block.vars;
+const { API_PORT, API_URL } = slot.vars;
 ```
 
-`reserve()` accepts `start`, `size`, `host`, `idleTtlMinutes`, `keep`, and `vars`. All six options are optional and use the defaults in the config table.
+`reserve()` accepts `start`, `size`, `host`, `idleTtlMinutes`, `keep`, and `vars`. All six options are optional. Omit `start` and `size` to reuse the saved repository settings. Other options use the defaults in the config table.
 
-Each entry in `vars` uses one port. The example returns three named values from two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a reservation.
+Each entry in `vars` uses one port. The example defines three custom variables with two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a reservation.
 
-### Read and release reservations
+#### Read and release reservations
 
 ```js
-import { cleanup, current, release, stats } from '@b12k/porto';
+import { cleanupSlots, getAllSlots, getSlot, releaseAllSlots, releaseSlot } from '@b12k/porto';
 
-const blocks = await current(); // Blocks for this checkout
-const reservations = await stats(); // All reservations for this repository
-const released = await release(); // Release this checkout's blocks if their ports are free
-const expired = await cleanup(); // Release expired blocks if their ports are free
+const currentSlot = await getSlot(); // Current slot for this checkout
+const selectedSlot = await getSlot(1); // Slot #1
+const reservedSlots = await getAllSlots(); // All reserved slots for this repository
+const releasedSlot = await releaseSlot(); // Release this checkout's slot if its ports are free
+const releasedSelectedSlot = await releaseSlot(1); // Release slot #1 if its ports are free
+const releasedSlots = await releaseAllSlots(); // Release all slots if their ports are free
+const expiredSlots = await cleanupSlots(); // Release expired slots if their ports are free
 ```
-
-`release()` throws `BusyPortsError` if a port is in use. Its `ports` property lists the blocked ports.
-
-Porto stores reservations in `<git-common-dir>/porto-registry.json`.
