@@ -17,7 +17,7 @@ import { parseOptions } from './schemas';
 import { assertVarsFit, mapSlotToVars, parseVarEntries } from './vars';
 
 type ReservedSlot<Entries extends Vars = Vars> = Omit<ReturnType<typeof buildSlot<ReservationRecord>>, 'vars'> & {
-  vars: VarsResult<Entries> & { PORTO_SLOT: number };
+  vars: Entries extends readonly [] ? { SLOT: number } : VarsResult<Entries>;
 };
 type ReserveOptions = Partial<z.output<typeof OPTIONS_SCHEMA>> & { vars?: undefined | Vars };
 
@@ -27,10 +27,11 @@ async function allocateRecord(registry: Registry, options: Omit<ReservationRecor
   for (let index = 0; index < slotsCount; index += 1) {
     const firstPort = startPort + index * portsPerSlot;
     const lastPort = firstPort + portsPerSlot - 1;
+    const isOccupied = slots[index] !== undefined;
     // Check candidates in order without opening thousands of sockets at once.
     // oxlint-disable-next-line no-await-in-loop
-    if (!slots[index] && !(await checkHasBusyPort(firstPort, lastPort, options.host))) {
-      const record = { ...options, firstPort, lastPort, vars: { PORTO_SLOT: index } };
+    if (!isOccupied && !(await checkHasBusyPort(firstPort, lastPort, options.host))) {
+      const record = { ...options, firstPort, lastPort, vars: {} };
       slots[index] = record;
       return { index, record };
     }
@@ -44,23 +45,27 @@ function checkIsExpired(record: Pick<ReservationRecord, 'expiresAt'>, now: numbe
 
 function issuePorts(record: ReservationRecord, index: number, entries: Vars) {
   const { firstPort } = record;
-  record.vars = { ...mapSlotToVars({ firstPort, index }, entries), PORTO_SLOT: index };
+  // SLOT is the default only when no other variables are mapped; otherwise map it explicitly.
+  record.vars = entries.length === 0 ? { SLOT: index } : mapSlotToVars({ firstPort, index }, entries);
   record.ports = union(record.ports, range(firstPort, firstPort + entries.length));
   return buildSlot(record, index);
 }
 
-async function releaseRecord(registry: Registry, index: number, record: ReservationRecord) {
-  const busyPorts = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
-  if (busyPorts.length > 0) throw new BusyPortsError(busyPorts.map((port) => ({ port, slot: index })));
-  // oxlint-disable-next-line unicorn/no-null -- Removing a slot must preserve other slot indices.
-  registry.slots[index] = null;
+async function releaseRecord(registry: Registry, index: number, record: ReservationRecord, force = false) {
+  if (!force) {
+    const busyPorts = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
+    if (busyPorts.length > 0) throw new BusyPortsError(busyPorts.map((port) => ({ port, slot: index })));
+  }
+  // oxlint-disable-next-line typescript/no-dynamic-delete -- Slot indices are dynamic by design.
+  delete registry.slots[index];
   return buildSlot(record, index);
 }
 
 async function removeExpiredRecords(registry: Registry, now: number) {
   const checkedSlots = await Promise.all(
-    registry.slots.flatMap((record, index) => {
-      if (record === null || !checkIsExpired(record, now)) return [];
+    Object.entries(registry.slots).flatMap(([key, record]) => {
+      const index = Number(key);
+      if (!checkIsExpired(record, now)) return [];
       return [
         checkHasBusyPort(record.firstPort, record.lastPort, record.host).then((hasBusyPort) =>
           hasBusyPort ? undefined : buildSlot(record, index),
@@ -70,16 +75,15 @@ async function removeExpiredRecords(registry: Registry, now: number) {
   );
   const expiredSlots = checkedSlots.filter((slot) => slot !== undefined);
   for (const { index } of expiredSlots) {
-    // oxlint-disable-next-line unicorn/no-null -- Removing a slot must preserve other slot indices.
-    registry.slots[index] = null;
+    // oxlint-disable-next-line typescript/no-dynamic-delete -- Slot indices are dynamic by design.
+    delete registry.slots[index];
   }
   return expiredSlots;
 }
 
-function commitReservation<Result>(
+function commitReservation(
   { commonDirectory, worktreeId, worktreePath }: Awaited<ReturnType<typeof fetchGitContext>>,
   { vars = [], ...options }: Omit<PortoConfig, 'onReleased' | 'onReserved'>,
-  prepare: (slot: ReturnType<typeof issuePorts>) => Promise<Result> | Result,
 ) {
   return updateRegistry(commonDirectory, async (registry) => {
     const { env, envFile, host, idleTtlMinutes, jsonFile, keep, silent, size, start } = applyReserveDefaults(
@@ -87,17 +91,15 @@ function commitReservation<Result>(
       registry,
     );
     assertVarsFit(vars.length, size);
-    if (
-      (registry.startPort !== start || registry.portsPerSlot !== size) &&
-      registry.slots.some((record) => record !== null)
-    ) {
+    if ((registry.startPort !== start || registry.portsPerSlot !== size) && Object.keys(registry.slots).length > 0) {
       throw new PortoError('rangeMismatch');
     }
     registry.startPort = start;
     registry.portsPerSlot = size;
     const now = Date.now();
-    const existingIndex = registry.slots.findIndex((record) => record?.worktreeId === worktreeId);
-    const existingRecord = registry.slots[existingIndex];
+    const existingEntry = Object.entries(registry.slots).find(([, record]) => record.worktreeId === worktreeId);
+    const existingIndex = existingEntry === undefined ? -1 : Number(existingEntry[0]);
+    const existingRecord = existingEntry?.[1];
     const lastUsedAt = new Date(now).toISOString();
     const isKept = keep ?? existingRecord?.keep ?? false;
     const settings = {
@@ -121,7 +123,7 @@ function commitReservation<Result>(
       ? { index: existingIndex, record: existingRecord }
       : await allocateRecord(registry, { ...settings, ports: [], worktreeId });
     // A failed factory must leave the registry untouched.
-    return prepare(issuePorts(record, index, vars));
+    return issuePorts(record, index, vars);
   });
 }
 
@@ -133,7 +135,7 @@ async function reserve(options: ReserveOptions = {}) {
   const { vars: entries, ...optionsWithoutVars } = options;
   const vars = entries === undefined ? undefined : parseVarEntries(entries);
   const git = await fetchGitContext();
-  return commitReservation(git, { ...parseOptions(optionsWithoutVars), vars }, (slot) => slot);
+  return commitReservation(git, { ...parseOptions(optionsWithoutVars), vars });
 }
 
 export { checkIsExpired, commitReservation, releaseRecord, removeExpiredRecords, reserve };

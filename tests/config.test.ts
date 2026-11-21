@@ -68,19 +68,18 @@ it('loads a TypeScript defineConfig file and assigns one port per variable entry
   await writeConfig(`import { defineConfig } from ${JSON.stringify(packageUrl)};
     export default defineConfig({ start: ${start}, size: 3, env: true, vars: [
       'API_PORT',
-      (slot, port, idx) => ({
+      (port, slot) => ({
         CLIENT_PORT: port,
-        CLIENT_URL: 'https://wt' + slot + '.localhost:' + port + '/' + idx,
+        CLIENT_URL: 'https://wt' + slot + '.localhost:' + port,
       }),
       'ADMIN_PORT',
     ] });`);
-  const clientUrl = `https://wt0.localhost:${start + 1}/1`;
+  const clientUrl = `https://wt0.localhost:${start + 1}`;
   expect(await runCliJson(['reserve', '--json'])).toEqual({
     ADMIN_PORT: start + 2,
     API_PORT: start,
     CLIENT_PORT: start + 1,
     CLIENT_URL: clientUrl,
-    PORTO_SLOT: 0,
   });
   const env = parseEnv(await readFile(path.join(repositoryPath, '.env'), 'utf8'));
   expect(env).toEqual({
@@ -88,17 +87,16 @@ it('loads a TypeScript defineConfig file and assigns one port per variable entry
     API_PORT: String(start),
     CLIENT_PORT: String(start + 1),
     CLIENT_URL: clientUrl,
-    PORTO_SLOT: '0',
   });
   expect(await runCliJson(['show', '--all', '--json'])).toMatchObject([{ ports: [start, start + 1, start + 2] }]);
 });
 
 it('runs reserve by default with and without options', async () => {
   await writeConfig(`export default { start: ${start}, size: 2, vars: ['API_PORT'] };`);
-  expect(await runCliOutput([])).toBe(`API_PORT=${start}\nPORTO_SLOT=0\n`);
+  expect(await runCliOutput([])).toBe(`API_PORT=${start}\n`);
   expect(await runCliOutput(['show'])).toBe('0\n');
   expect(await runCliOutput(['--env', '--json'])).toBe(await runCliOutput(['reserve', '--json']));
-  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe(`API_PORT=${start}\nPORTO_SLOT=0\n`);
+  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe(`API_PORT=${start}\n`);
 });
 
 it('loads an ESM JavaScript config', async () => {
@@ -171,12 +169,12 @@ it('resolves config paths from the config directory and CLI paths from cwd', asy
   await writeConfig(`export default { start: ${start}, size: 2, envFile: 'config.env', jsonFile: 'config.json' };`);
   const configured = await runCliOutput(['reserve', '--json'], nestedPath);
   const configJson = await readFile(path.join(repositoryPath, 'config.json'), 'utf8');
-  expect(JSON.parse(configJson)).toEqual({ ...JSON.parse(configured), PORTO_SLOT: 0 });
-  expect(await readFile(path.join(repositoryPath, 'config.env'), 'utf8')).toBe('PORTO_SLOT=0\n');
+  expect(JSON.parse(configJson)).toEqual({ ...JSON.parse(configured), SLOT: 0 });
+  expect(await readFile(path.join(repositoryPath, 'config.env'), 'utf8')).toBe('SLOT=0\n');
   const explicit = await runCliOutput(['reserve', '--json-file=cli.json', '--env-file=cli.env', '--json'], nestedPath);
   const cliJson = await readFile(path.join(nestedPath, 'cli.json'), 'utf8');
-  expect(JSON.parse(cliJson)).toEqual({ ...JSON.parse(explicit), PORTO_SLOT: 0 });
-  expect(await readFile(path.join(nestedPath, 'cli.env'), 'utf8')).toBe('PORTO_SLOT=0\n');
+  expect(JSON.parse(cliJson)).toEqual({ ...JSON.parse(explicit), SLOT: 0 });
+  expect(await readFile(path.join(nestedPath, 'cli.env'), 'utf8')).toBe('SLOT=0\n');
 });
 
 it('writes configured files in silent mode and lets --no-silent restore stdout', async () => {
@@ -187,28 +185,28 @@ it('writes configured files in silent mode and lets --no-silent restore stdout',
   );
   expect(await runCliOutput([], nestedPath)).toBe('');
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
-  expect(JSON.parse(jsonOutput)).toEqual({ firstPort: start, index: 0, lastPort: start + 1, PORTO_SLOT: 0 });
-  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('PORTO_SLOT=0\n');
+  expect(JSON.parse(jsonOutput)).toEqual({ firstPort: start, index: 0, lastPort: start + 1, SLOT: 0 });
+  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('SLOT=0\n');
   expect(await readdir(nestedPath)).toEqual([]);
   expect(await runCliOutput(['reserve', '--no-silent'], nestedPath)).toBe('0\n');
 });
 
-it('creates exports only when requested and uses the default env filename and PORTO_SLOT', async () => {
+it('creates exports only when requested and uses the default env filename and SLOT', async () => {
   const args = ['reserve', '--start', String(start), '--size', '2'];
   await runCli(args);
   expect(await readdir(repositoryPath)).toEqual(['.git']);
   const stdout = await runCliOutput([...args, '--json-file=ports.json', '--env', '--json', '--silent']);
   expect(stdout).toBe('');
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
-  expect(JSON.parse(jsonOutput)).toEqual({ firstPort: start, index: 0, lastPort: start + 1, PORTO_SLOT: 0 });
-  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('PORTO_SLOT=0\n');
+  expect(JSON.parse(jsonOutput)).toEqual({ firstPort: start, index: 0, lastPort: start + 1, SLOT: 0 });
+  expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('SLOT=0\n');
 });
 
-it('writes only PORTO_SLOT with --env when no variables are configured', async () => {
+it('writes only SLOT with --env when no variables are configured', async () => {
   const envPath = path.join(repositoryPath, '.env');
   await writeFile(envPath, '# local settings\nOTHER=keep\n');
   const output = await runCliOutput(['reserve', '--env']);
-  expect(await readFile(envPath, 'utf8')).toBe(`# local settings\nOTHER=keep\nPORTO_SLOT=${output.trim()}\n`);
+  expect(await readFile(envPath, 'utf8')).toBe(`# local settings\nOTHER=keep\nSLOT=${output.trim()}\n`);
 });
 
 it('lets an explicit CLI env filename enable env over a disabled config', async () => {
@@ -216,9 +214,9 @@ it('lets an explicit CLI env filename enable env over a disabled config', async 
   await runCli(['reserve']);
   expect(await readdir(repositoryPath)).toEqual(['.git', 'porto.config.ts']);
   await runCli(['reserve', '--env']);
-  expect(await readFile(path.join(repositoryPath, 'config.env'), 'utf8')).toBe('PORTO_SLOT=0\n');
+  expect(await readFile(path.join(repositoryPath, 'config.env'), 'utf8')).toBe('SLOT=0\n');
   await runCli(['reserve', '--env-file=cli.env']);
-  expect(await readFile(path.join(repositoryPath, 'cli.env'), 'utf8')).toBe('PORTO_SLOT=0\n');
+  expect(await readFile(path.join(repositoryPath, 'cli.env'), 'utf8')).toBe('SLOT=0\n');
 });
 
 it('lets --no-env disable an explicit CLI env filename in either flag order', async () => {
@@ -237,7 +235,7 @@ it('keeps a stored keep setting when the next config does not specify it', async
 });
 
 it('lets CLI vars replace configured callbacks and use their own positions', async () => {
-  await writeConfig(`export default { start: ${start}, size: 3, vars: [(_slot, port) => ({ CONFIG_PORT: port })] };`);
+  await writeConfig(`export default { start: ${start}, size: 3, vars: [(port, _slot) => ({ CONFIG_PORT: port })] };`);
   expect(
     JSON.parse(
       await runCliOutput([
@@ -247,7 +245,7 @@ it('lets CLI vars replace configured callbacks and use their own positions', asy
         '--json',
       ]),
     ),
-  ).toEqual({ API_PORT: start, HOST: 'wt0.localhost', PORTO_SLOT: 0, URL: `http://localhost:${start + 2}` });
+  ).toEqual({ API_PORT: start, HOST: 'wt0.localhost', URL: `http://localhost:${start + 2}` });
 });
 
 it('fails on invalid config before writing a reservation', async () => {

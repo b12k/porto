@@ -19,11 +19,13 @@ async function getAllSlots() {
   const worktreePathsById = await listWorktreePaths(commonDirectory);
   return updateRegistry(commonDirectory, ({ slots }) => {
     const now = Date.now();
-    return slots.flatMap((record, index) => {
-      if (record === null) return [];
-      const { worktreeId, ...settings } = record;
+    return Object.entries(slots).flatMap(([key, record]) => {
+      const index = Number(key);
+      const { worktreeId, ...slotFields } = record;
       const worktreePath = worktreePathsById.get(worktreeId) ?? record.worktreePath;
-      return [{ ...settings, index, isExpired: checkIsExpired(record, now), worktreePath } satisfies ReservationStats];
+      return [
+        { ...slotFields, index, isExpired: checkIsExpired(record, now), worktreePath } satisfies ReservationStats,
+      ];
     });
   });
 }
@@ -34,36 +36,45 @@ async function getSlot(slotIndex?: number) {
   }
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, ({ slots }) => {
-    const index = slotIndex ?? slots.findIndex((record) => record?.worktreeId === worktreeId);
-    const record = slots[index];
-    return record ? buildSlot(record, index) : undefined;
+    if (slotIndex !== undefined) {
+      const record = slots[slotIndex];
+      return record ? buildSlot(record, slotIndex) : undefined;
+    }
+    const found = Object.entries(slots).find(([, record]) => record.worktreeId === worktreeId);
+    return found ? buildSlot(found[1], Number(found[0])) : undefined;
   });
 }
 
-async function releaseAllSlots() {
+async function releaseAllSlots(force = false) {
   const { commonDirectory } = await fetchGitContext();
   return updateRegistry(commonDirectory, async (registry) => {
     const releasedSlots: Array<PortSlot> = [];
-    for (const [index, record] of registry.slots.entries()) {
-      if (record !== null) {
-        // Keep every release in one transaction; a busy slot leaves the file unchanged.
-        // oxlint-disable-next-line no-await-in-loop
-        releasedSlots.push(await releaseRecord(registry, index, record));
-      }
+    for (const [key, record] of Object.entries(registry.slots)) {
+      const index = Number(key);
+      // Keep every release in one transaction; a busy slot leaves the file unchanged.
+      // oxlint-disable-next-line no-await-in-loop
+      releasedSlots.push(await releaseRecord(registry, index, record, force));
     }
     return releasedSlots;
   });
 }
 
-async function releaseSlot(slotIndex?: number) {
-  if (slotIndex !== undefined && (!Number.isSafeInteger(slotIndex) || slotIndex < 0)) {
+async function releaseSlot(force?: boolean): Promise<PortSlot | undefined>;
+async function releaseSlot(slotIndex: number | undefined, force?: boolean): Promise<PortSlot | undefined>;
+async function releaseSlot(slotIndex?: boolean | number, force = false) {
+  const selected = typeof slotIndex === 'boolean' ? undefined : slotIndex;
+  const forced = typeof slotIndex === 'boolean' ? slotIndex : force;
+  if (selected !== undefined && (!Number.isSafeInteger(selected) || selected < 0)) {
     throw new PortoError('slotIndexInvalid');
   }
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, (registry) => {
-    const index = slotIndex ?? registry.slots.findIndex((record) => record?.worktreeId === worktreeId);
-    const record = registry.slots[index];
-    return record ? releaseRecord(registry, index, record) : undefined;
+    if (selected !== undefined) {
+      const record = registry.slots[selected];
+      return record ? releaseRecord(registry, selected, record, forced) : undefined;
+    }
+    const found = Object.entries(registry.slots).find(([, record]) => record.worktreeId === worktreeId);
+    return found ? releaseRecord(registry, Number(found[0]), found[1], forced) : undefined;
   });
 }
 

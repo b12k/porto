@@ -20,8 +20,8 @@ let start: number;
 async function readRecord() {
   const registryPath = path.join(directoryPath, '.git', 'porto-registry.json');
   const { slots } = REGISTRY_SCHEMA.parse(JSON.parse(await readFile(registryPath, 'utf8')));
-  const record = slots.find((slot) => slot !== null);
-  if (!record) throw new Error('Missing saved reservation.');
+  const [record] = Object.values(slots);
+  if (record === undefined) throw new Error('Missing saved reservation.');
   return record;
 }
 
@@ -61,7 +61,7 @@ it('stores resolved settings and variables and reads them without evaluating the
      export default {
        start: ${start}, size: 3, host: '127.0.0.1', idleTtlMinutes: 2, keep: false,
        env: true, envFile: '.env.local', jsonFile: 'env.json', silent: true,
-       vars: ['CLIENT_PORT', (_slot, port) => {
+       vars: ['CLIENT_PORT', (port, _slot) => {
          appendFileSync('factories.txt', 'called\\n');
          return { API_PORT: port, API_URL: 'http://localhost:' + port, ['__proto__']: port };
        }],
@@ -83,7 +83,7 @@ it('stores resolved settings and variables and reads them without evaluating the
     lastPort: start + 2,
     ports: [start, start + 1],
     silent: true,
-    vars: { API_PORT: start + 1, API_URL: `http://localhost:${start + 1}`, CLIENT_PORT: start, PORTO_SLOT: 0 },
+    vars: { API_PORT: start + 1, API_URL: `http://localhost:${start + 1}`, CLIENT_PORT: start },
   });
   if (record.expiresAt === null) throw new Error('Expected an expiry time for this slot.');
   expect(Date.parse(record.expiresAt) - Date.parse(record.lastUsedAt)).toBe(120_000);
@@ -107,11 +107,7 @@ it('stores range settings once and cleans up using the saved slot expiry', async
     await runCli(['reserve', '--start', String(start), '--size=3', '--vars=PORT']);
     const registryPath = path.join(directoryPath, '.git', 'porto-registry.json');
     const record = await readRecord();
-    expect(record).toMatchObject({
-      firstPort: start + 3,
-      lastPort: start + 5,
-      vars: { PORT: start + 3, PORTO_SLOT: 1 },
-    });
+    expect(record).toMatchObject({ firstPort: start + 3, lastPort: start + 5, vars: { PORT: start + 3 } });
     expect(
       await runApi('const slot = await getSlot(); console.log(JSON.stringify({ slot, port: slot.getPort() }));'),
     ).toEqual({ port: start + 3, slot: { ...record, index: 1 } });
@@ -119,7 +115,7 @@ it('stores range settings once and cleans up using the saved slot expiry', async
     const registryContents = await readFile(registryPath, 'utf8');
     const registry = REGISTRY_SCHEMA.parse(JSON.parse(registryContents));
     expect(registry).toMatchObject({ portsPerSlot: 3, startPort: start });
-    expect(registry.slots[0]).toBeNull();
+    expect(registry.slots[0]).toBeUndefined();
     expect(record).not.toHaveProperty('index');
     expect(record).not.toHaveProperty('rangeStart');
     expect(record).not.toHaveProperty('size');
@@ -152,7 +148,7 @@ it('uses API options and saved range settings without loading a CLI config', asy
     "throw new Error('The library API must not load this config.');",
   );
   const slot = await runApi(`console.log(JSON.stringify(await reserve({ start: ${start}, size: 2 })));`);
-  const expectedSlot = { firstPort: start, index: 0, lastPort: start + 1, vars: { PORTO_SLOT: 0 } };
+  const expectedSlot = { firstPort: start, index: 0, lastPort: start + 1, vars: { SLOT: 0 } };
   expect(slot).toMatchObject(expectedSlot);
   expect(await runApi('console.log(JSON.stringify(await reserve()));')).toMatchObject(expectedSlot);
   const { stdout } = await runCli(['show', '--json']);

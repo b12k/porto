@@ -14,7 +14,7 @@ type VarEntryResult<Entry extends VarEntry> = Entry extends string
   : Entry extends VarFactory
     ? ReturnType<Entry>
     : never;
-type VarFactory = (slotIndex: number, port: number, index: number) => Record<string, number | string>;
+type VarFactory = (port: number, slot: number) => Record<string, number | string>;
 type Vars = ReadonlyArray<VarEntry>;
 type VarsResult<Entries extends Vars> = Entries extends readonly [
   infer Entry extends VarEntry,
@@ -34,15 +34,7 @@ const VAR_RESULT_SCHEMA = z
   .transform((variables) => Object.entries(variables))
   .pipe(z.array(VAR_RESULT_ENTRY_SCHEMA));
 
-const VAR_VALUES_SCHEMA = VAR_RESULT_SCHEMA.transform((entries) => Object.fromEntries(entries))
-  .refine(
-    (variables) => {
-      const slotIndex = variables['PORTO_SLOT'];
-      return typeof slotIndex === 'number' && Number.isSafeInteger(slotIndex) && slotIndex >= 0;
-    },
-    { message: 'PORTO_SLOT must be a non-negative integer.', path: ['PORTO_SLOT'] },
-  )
-  .transform((variables) => ({ ...variables, PORTO_SLOT: Number(variables['PORTO_SLOT']) }));
+const VAR_VALUES_SCHEMA = VAR_RESULT_SCHEMA.transform((entries) => Object.fromEntries(entries));
 
 const VARS_SCHEMA = z.array(z.union([VAR_NAME_SCHEMA, VAR_FACTORY_SCHEMA])).refine(
   (entries) => {
@@ -62,11 +54,16 @@ function mapVarEntry(entry: VarEntry, slot: Pick<PortSlot, 'firstPort' | 'index'
   const port = slot.firstPort + index;
   if (typeof entry === 'string') return [[entry, port] as const];
   try {
-    const variables: unknown = entry(slot.index, port, index);
+    const variables: unknown = entry(port, slot.index);
     if (types.isPromise(variables)) {
+      // Attach a no-op handler to avoid unhandled rejection noise; async factories are unsupported.
       variables.catch(() => {
-        // Async factories are rejected below; observe their errors without awaiting them.
+        // Async factories are rejected below with mappingInvalid.
       });
+      throw new PortoError(
+        'mappingInvalid',
+        `Cannot create variables for entry ${index + 1}; async factories are not supported, return a plain object.`,
+      );
     }
     return VAR_RESULT_SCHEMA.parse(variables);
   } catch (error) {
@@ -91,11 +88,11 @@ function mapSlotToVars(slot: Pick<PortSlot, 'firstPort' | 'index'>, entries: Var
   return Object.fromEntries(environment);
 }
 
-function parseVar(entry: string) {
-  const separator = entry.indexOf('=');
-  const name = (separator === -1 ? entry : entry.slice(0, separator)).trim();
+function parseVar(source: string) {
+  const separator = source.indexOf('=');
+  const name = (separator === -1 ? source : source.slice(0, separator)).trim();
   if (separator === -1) return { name };
-  const template = entry.slice(separator + 1);
+  const template = source.slice(separator + 1);
   const result = VAR_TEXT_SCHEMA.safeParse(template);
   if (!result.success) {
     throw new PortoError('mappingInvalid', 'Vars templates must fit on one line.', { cause: result.error });
@@ -119,11 +116,11 @@ function parseVars(source: string) {
   return groups.map<VarEntry>((group) => {
     const [firstVar] = group;
     if (group.length === 1 && firstVar && firstVar.template === undefined) return firstVar.name;
-    return (slotIndex, port) =>
+    return (port, slot) =>
       Object.fromEntries(
         group.map(({ name, template }) => [
           name,
-          template?.replaceAll('{{slot}}', String(slotIndex)).replaceAll('{{port}}', String(port)) ?? port,
+          template?.replaceAll('{{slot}}', String(slot)).replaceAll('{{port}}', String(port)) ?? port,
         ]),
       );
   });

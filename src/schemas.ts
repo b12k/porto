@@ -57,28 +57,39 @@ const RECORD_SCHEMA = z
 
 type ReservationRecord = z.output<typeof RECORD_SCHEMA>;
 
+const SLOTS_SCHEMA = z
+  .record(z.coerce.number().int().nonnegative(), RECORD_SCHEMA)
+  .refine((slots) => Object.keys(slots).every((key) => key === String(Number(key))), {
+    message: 'Slot keys must be canonical non-negative integer strings.',
+  });
+
 const REGISTRY_SCHEMA = z
-  .object({ portsPerSlot: PORT_SCHEMA, slots: z.array(RECORD_SCHEMA.nullable()), startPort: PORT_SCHEMA })
-  .refine(({ portsPerSlot, slots, startPort }) => startPort + Math.max(slots.length, 1) * portsPerSlot - 1 <= 65_535, {
-    message: 'Port slots must fit in the TCP port range.',
-  })
+  .object({ portsPerSlot: PORT_SCHEMA, slots: SLOTS_SCHEMA, startPort: PORT_SCHEMA })
+  .refine(
+    ({ portsPerSlot, slots, startPort }) => {
+      const keys = Object.keys(slots).map(Number);
+      const usedSlots = keys.length === 0 ? 1 : Math.max(...keys) + 1;
+      return startPort + usedSlots * portsPerSlot - 1 <= 65_535;
+    },
+    { message: 'Port slots must fit in the TCP port range.' },
+  )
   .refine(
     ({ slots }) => {
-      const records = slots.filter((record) => record !== null);
+      const records = Object.values(slots);
       return new Set(records.map((record) => record.worktreeId)).size === records.length;
     },
-    { message: 'Each checkout can have only one reservation.' },
+    { message: 'Each worktree can have only one slot.' },
   )
   .refine(
     ({ portsPerSlot, slots, startPort }) =>
-      slots.every(
-        (record, index) =>
-          record === null ||
-          (record.firstPort === startPort + index * portsPerSlot &&
-            record.lastPort === record.firstPort + portsPerSlot - 1 &&
-            record.vars.PORTO_SLOT === index),
-      ),
-    { message: 'Slot bounds and PORTO_SLOT must match its array index and the repository range.' },
+      Object.entries(slots).every(([key, record]) => {
+        const index = Number(key);
+        return (
+          record.firstPort === startPort + index * portsPerSlot &&
+          record.lastPort === record.firstPort + portsPerSlot - 1
+        );
+      }),
+    { message: 'Slot bounds must match its slot index and the repository range.' },
   );
 
 type Registry = z.output<typeof REGISTRY_SCHEMA>;

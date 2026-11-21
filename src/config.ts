@@ -16,26 +16,45 @@ const CONFIG_SCHEMA = z
   .partial();
 
 type PortoConfig = z.input<typeof CONFIG_SCHEMA>;
+type ResolvedReserveConfig = ReturnType<typeof applyReserveDefaults>;
 
 const libraryName = 'porto';
 const { name, version } = packageJson;
 
+// Layer 1 of the layered config: static defaults.
+// Host and keep are absent: they inherit from the stored slot inside the lock.
+const DEFAULT_CONFIG = {
+  env: false,
+  envFile: '.env',
+  idleTtlMinutes: 60,
+  jsonFile: false as false | string,
+  silent: false,
+  size: 10,
+  start: 10_000,
+};
+
+function resolveOutputSettings(settings: Pick<PortoConfig, 'env' | 'envFile' | 'jsonFile'>) {
+  return {
+    env: settings.env ?? DEFAULT_CONFIG.env,
+    envFile: settings.envFile ?? DEFAULT_CONFIG.envFile,
+    jsonFile: settings.jsonFile ?? DEFAULT_CONFIG.jsonFile,
+  };
+}
+
 function applyReserveDefaults(
   settings: Omit<PortoConfig, 'onReleased' | 'onReserved' | 'vars'>,
-  range: { portsPerSlot: number; startPort: number },
+  storedRange: { portsPerSlot: number; startPort: number },
 ) {
-  const size = settings.size ?? range.portsPerSlot;
-  const start = settings.start ?? range.startPort;
+  const size = settings.size ?? storedRange.portsPerSlot;
+  const start = settings.start ?? storedRange.startPort;
   if (start + size - 1 > 65_535) {
     throw new PortoError('optionsInvalid', 'size: size must fit in the TCP port range.');
   }
   return {
     ...settings,
-    env: settings.env ?? false,
-    envFile: settings.envFile ?? '.env',
-    idleTtlMinutes: settings.idleTtlMinutes ?? 60,
-    jsonFile: settings.jsonFile ?? false,
-    silent: settings.silent ?? false,
+    ...resolveOutputSettings(settings),
+    idleTtlMinutes: settings.idleTtlMinutes ?? DEFAULT_CONFIG.idleTtlMinutes,
+    silent: settings.silent ?? DEFAULT_CONFIG.silent,
     size,
     start,
   };
@@ -80,5 +99,15 @@ async function fetchConfig(worktreePath: string): Promise<PortoConfig> {
   return settings;
 }
 
-export { applyReserveDefaults, defineConfig, fetchConfig, libraryName, name, parseConfig, version };
-export type { PortoConfig };
+export {
+  applyReserveDefaults,
+  DEFAULT_CONFIG,
+  defineConfig,
+  fetchConfig,
+  libraryName,
+  name,
+  parseConfig,
+  resolveOutputSettings,
+  version,
+};
+export type { PortoConfig, ResolvedReserveConfig };

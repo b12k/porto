@@ -25,7 +25,7 @@ export const ERRORS_BY_KEY = {
     message: 'Port range settings differ from the repository registry.',
   },
   registryInvalid: {
-    instruction: 'Restore or repair the reservation file before continuing.',
+    instruction: 'Restore or repair the slot file before continuing.',
     message: 'Cannot read reservation.',
   },
   reservationNotFound: {
@@ -42,7 +42,7 @@ export const ERRORS_BY_KEY = {
     message: 'No free port slot remains in the TCP port range.',
   },
   worktreeNotFound: {
-    instruction: 'Run Porto inside a regular Git checkout or linked worktree.',
+    instruction: 'Run Porto inside a regular Git worktree.',
     message: 'Porto must run inside a Git working tree.',
   },
 } as const satisfies ErrorsByKey;

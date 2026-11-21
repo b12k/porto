@@ -72,7 +72,7 @@ it('awaits onReserved after exports and registry unlock, including reused slots'
       const reserved = await getSlot();
       const env = await readFile('.env', 'utf8');
       const json = JSON.parse(await readFile('ports.json', 'utf8'));
-      if (reserved?.firstPort !== slot.firstPort || json.index !== slot.index || env !== 'PORTO_SLOT=' + slot.index + '\\n') {
+      if (reserved?.firstPort !== slot.firstPort || json.index !== slot.index || env !== 'SLOT=' + slot.index + '\\n') {
         throw new Error('Hook ran before reservation or exports completed.');
       }
       await appendFile('reserved.txt', slot.index + ':' + ports.join(',') + '\\n');
@@ -87,12 +87,12 @@ it('awaits onReserved after exports and registry unlock, including reused slots'
 });
 
 it('passes one port per variable entry to onReserved even when it produces multiple variables', async () => {
-  await writeConfig(`vars: [(_slot, port) => ({ API_PORT: port, API_PORT_ALIAS: port })], onReserved(slot, ports) {
+  await writeConfig(`vars: [(port, _slot) => ({ API_PORT: port, API_PORT_ALIAS: port })], onReserved(slot, ports) {
     if (ports[0] !== slot.getPort()) throw new Error('Missing assigned port.');
     writeFileSync('reserved.json', JSON.stringify({ index: slot.index, ports }));
   }`);
   const { stdout } = await runCli(['reserve', '--json']);
-  expect(JSON.parse(stdout)).toEqual({ API_PORT: start, API_PORT_ALIAS: start, PORTO_SLOT: 0 });
+  expect(JSON.parse(stdout)).toEqual({ API_PORT: start, API_PORT_ALIAS: start });
   const marker = await readFile(path.join(directoryPath, 'reserved.json'), 'utf8');
   expect(JSON.parse(marker)).toEqual({ index: 0, ports: [start] });
 });
@@ -102,7 +102,7 @@ it('calls onReleased for the current slot with saved assigned ports after config
     if ((await getSlot()) !== undefined) throw new Error('Hook ran before release completed.');
     await appendFile('released.txt', slot.firstPort + ':' + ports.join(',') + '\\n');
   }`;
-  await writeConfig(`vars: [(_slot, port) => ({ API_PORT: port, API_PORT_ALIAS: port })], ${hooks}`);
+  await writeConfig(`vars: [(port, _slot) => ({ API_PORT: port, API_PORT_ALIAS: port })], ${hooks}`);
   await runCli(['reserve']);
   await writeConfig(hooks, start + 10);
   await runCli(['release']);
