@@ -73,9 +73,9 @@ One setting, three ways to set it. Precedence: CLI flag → config file → save
 | Idle TTL       | `--idle <minutes>`                      | `idleTtlMinutes` | `60`              | Idle limit, minutes. Each `reserve` restarts the countdown.                              |
 | Keep           | `--keep` / `--no-keep`                  | `keep`           | Off for new slots | Keep the slot during idle cleanup. Omit to keep the current value.                       |
 | Variables      | `--vars <vars>` / `--no-vars`           | `vars`           | Unset             | One port per entry. `--no-vars` clears the configured list.                              |
-| Env output     | `--env` / `--no-env`                    | `env`            | `false`           | Write variables and `PORTO_SLOT` to an env file.                                         |
+| Env output     | `--env` / `--no-env`                    | `env`            | `false`           | Write variables and `SLOT` to an env file.                                               |
 | Env file       | `--env-file <file>`                     | `envFile`        | `.env`            | An explicit path enables `env` unless you set `env: false`.                              |
-| JSON file      | `--json-file <file>` / `--no-json-file` | `jsonFile`       | `false`           | Save variables or slot details with `PORTO_SLOT`. A path enables it.                     |
+| JSON file      | `--json-file <file>` / `--no-json-file` | `jsonFile`       | `false`           | Save variables or slot details with `SLOT`. A path enables it.                           |
 | Silent         | `--silent` / `--no-silent`              | `silent`         | `false`           | Hide the `reserve` result on stdout. Files are still written.                            |
 
 CLI-only flags: `--json` (print JSON to stdout, also works with `show`).
@@ -86,7 +86,7 @@ Use `-h` or `--help` for help. Use `-V` or `--version` for the version.
 
 ##### `--vars` template syntax
 
-Use `;` to move to the next port and `|` to share the current port. Use `NAME` for a port number or `NAME=template` for text. Templates accept `{{slot}}` and `{{port}}`.
+Use `;` to move to the next port and `|` to share the current port. Use `NAME` for a port number or `NAME=template` for text. Templates accept `{{slot}}` and `{{port}}`. Map `SLOT` explicitly when you need the slot index next to other variables: `--vars "SLOT={{slot}};API_PORT"`.
 
 ##### Write to files
 
@@ -94,7 +94,7 @@ Use `;` to move to the next port and `|` to share the current port. Use `NAME` f
 pnpm porto --vars "CLIENT_PORT|HOST_URL=http://localhost:{{port}};API_PORT" --env-file .env.local --json-file env.json
 ```
 
-Both files always include `PORTO_SLOT`, the slot index. If the first slot is free, Porto writes these files.
+If the first slot is free, Porto writes these files. `SLOT` is included only when no other variables are given — otherwise map it explicitly as shown above.
 
 `.env.local`
 
@@ -102,13 +102,12 @@ Both files always include `PORTO_SLOT`, the slot index. If the first slot is fre
 CLIENT_PORT=10000
 HOST_URL=http://localhost:10000
 API_PORT=10001
-PORTO_SLOT=0
 ```
 
 `env.json`
 
 ```json
-{ "CLIENT_PORT": 10000, "HOST_URL": "http://localhost:10000", "API_PORT": 10001, "PORTO_SLOT": 0 }
+{ "CLIENT_PORT": 10000, "HOST_URL": "http://localhost:10000", "API_PORT": 10001 }
 ```
 
 Run the same command again in this worktree to reuse its slot. A second worktree gets its own slot.
@@ -147,7 +146,7 @@ export default defineConfig({
   envFile: '.env.local',
   jsonFile: 'ports.json',
   silent: false,
-  vars: ['PORT', (_slot, port) => ({ PORT_2: port, HOST_NAME: `https://localhost:${port}` }), 'DB_PORT'],
+  vars: ['PORT', (port, slot) => ({ PORT_2: port, HOST_NAME: `https://localhost:${port}`, SLOT: slot }), 'DB_PORT'],
   onReserved(slot, ports) {
     console.error(`Reserved slot ${slot.index} with ports ${ports.join(', ')}`);
   },
@@ -164,7 +163,7 @@ All properties are optional. Every setting from [reserve settings](#reserve-sett
 | `onReserved` | Run after Porto saves the slot and writes the requested files. |
 | `onReleased` | Run once per slot freed by `release`.                          |
 
-A `vars` function receives `(slotIndex, port, entryIndex)`, where `entryIndex` starts at zero. Return an object with string or number values. In the example, `PORT_2` and `HOST_NAME` use the same port.
+A `vars` function receives `(port, slot)`. Return an object with string or number values. In the example, `PORT_2` and `HOST_NAME` use the same port, and `SLOT` maps the slot index explicitly.
 
 Both hooks receive `(slot, ports)`, where `ports` lists the ports assigned to that slot. Hooks can return a promise.
 
@@ -196,7 +195,7 @@ const { PORT, API_PORT } = slot.vars;
 const DB_PORT = slot.getPort(2); // 10002 if the first slot is free
 ```
 
-TypeScript infers `PORT` and `API_PORT` as `number`. `slot.vars` contains this call's named values and the built-in `PORTO_SLOT`. `slot.ports` lists the ports assigned through `vars`. `getPort()` reads a port by offset.
+TypeScript infers `PORT` and `API_PORT` as `number`. `slot.vars` contains this call's named values; with no `vars` given it contains only the built-in `SLOT`. `slot.ports` lists the ports assigned through `vars`. `getPort()` reads a port by offset.
 
 #### Share a port between variables
 
@@ -209,7 +208,7 @@ const slot = await reserve({
   host: '127.0.0.1',
   idleTtlMinutes: 30,
   keep: true,
-  vars: ['PORT', (_slot, port) => ({ API_PORT: port, API_URL: `http://localhost:${port}` })],
+  vars: ['PORT', (port, slot) => ({ API_PORT: port, API_URL: `http://localhost:${port}`, SLOT: slot })],
 });
 const { API_PORT, API_URL } = slot.vars;
 ```

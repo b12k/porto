@@ -17,7 +17,7 @@ import { parseOptions } from './schemas';
 import { assertVarsFit, mapSlotToVars, parseVarEntries } from './vars';
 
 type ReservedSlot<Entries extends Vars = Vars> = Omit<ReturnType<typeof buildSlot<ReservationRecord>>, 'vars'> & {
-  vars: VarsResult<Entries> & { PORTO_SLOT: number };
+  vars: Entries extends readonly [] ? { SLOT: number } : VarsResult<Entries>;
 };
 type ReserveOptions = Partial<z.output<typeof OPTIONS_SCHEMA>> & { vars?: undefined | Vars };
 
@@ -31,7 +31,7 @@ async function allocateRecord(registry: Registry, options: Omit<ReservationRecor
     // Check candidates in order without opening thousands of sockets at once.
     // oxlint-disable-next-line no-await-in-loop
     if (!isOccupied && !(await checkHasBusyPort(firstPort, lastPort, options.host))) {
-      const record = { ...options, firstPort, lastPort, vars: { PORTO_SLOT: index } };
+      const record = { ...options, firstPort, lastPort, vars: {} };
       slots[index] = record;
       return { index, record };
     }
@@ -45,7 +45,8 @@ function checkIsExpired(record: Pick<ReservationRecord, 'expiresAt'>, now: numbe
 
 function issuePorts(record: ReservationRecord, index: number, entries: Vars) {
   const { firstPort } = record;
-  record.vars = { ...mapSlotToVars({ firstPort, index }, entries), PORTO_SLOT: index };
+  // SLOT is the default only when no other variables are mapped; otherwise map it explicitly.
+  record.vars = entries.length === 0 ? { SLOT: index } : mapSlotToVars({ firstPort, index }, entries);
   record.ports = union(record.ports, range(firstPort, firstPort + entries.length));
   return buildSlot(record, index);
 }

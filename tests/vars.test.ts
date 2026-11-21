@@ -7,7 +7,7 @@ import { PortoError } from '../src/error';
 import { buildSlot } from '../src/ports';
 import { assertVarsFit, mapSlotToVars, parseVarEntries, parseVars, VARS_SCHEMA } from '../src/vars';
 
-function createSpecialVar(_slot: number, port: number) {
+function createSpecialVar(port: number) {
   return { ['__proto__']: port };
 }
 
@@ -15,13 +15,13 @@ it('shares one indexed port across variables from the same factory', () => {
   const portSlot = buildSlot({ firstPort: 1006, lastPort: 1008 }, 2);
   const vars: Vars = [
     'API_PORT',
-    (slot, port, idx) => ({ CLIENT_PORT: port, CLIENT_URL: `http://wt${slot}.localhost:${port}/${idx}` }),
+    (port, slot) => ({ CLIENT_PORT: port, CLIENT_URL: `http://wt${slot}.localhost:${port}` }),
     'LAST_PORT',
   ];
   expect(mapSlotToVars(portSlot, parseVarEntries(vars))).toEqual({
     API_PORT: 1006,
     CLIENT_PORT: 1007,
-    CLIENT_URL: 'http://wt2.localhost:1007/1',
+    CLIENT_URL: 'http://wt2.localhost:1007',
     LAST_PORT: 1008,
   });
 });
@@ -39,7 +39,7 @@ it('uses the same indexed semantics for CLI templates and structured vars', () =
 
 it('validates without executing factories and preserves their identities', () => {
   let callsCount = 0;
-  function createHost(slot: number) {
+  function createHost(_port: number, slot: number) {
     callsCount += 1;
     return { HOST: `wt${slot}.localhost` };
   }

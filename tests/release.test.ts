@@ -127,7 +127,7 @@ it('shares one range across worktrees, preserves indices and reuses free slots',
   const contents = await readFile(registryPath, 'utf8');
   expect(JSON.parse(contents)).toMatchObject({
     portsPerSlot: 1,
-    slots: { 1: { vars: { PORTO_SLOT: 1 } } },
+    slots: { 1: { vars: { SLOT: 1 } } },
     startPort: start,
   });
   await runCli(['reserve']);
@@ -200,13 +200,13 @@ it('checks busy ports only in selected slots and keeps failed releases atomic', 
   }
 });
 
-it('always exports the slot index even when variables override PORTO_SLOT', async () => {
+it('respects an explicitly mapped SLOT variable instead of forcing the slot index', async () => {
   const args = [
     'reserve',
     '--start',
     String(start),
     '--size=3',
-    '--vars=PORTO_SLOT=wrong|API_PORT',
+    '--vars=SLOT=wrong|API_PORT',
     '--env-file=.env.local',
     '--json-file=env.json',
   ];
@@ -216,11 +216,9 @@ it('always exports the slot index even when variables override PORTO_SLOT', asyn
   try {
     await runCli(args);
     await runCli(args);
-    expect(await readFile(path.join(directoryPath, '.env.local'), 'utf8')).toBe(
-      `PORTO_SLOT=1\nAPI_PORT=${start + 3}\n`,
-    );
+    expect(await readFile(path.join(directoryPath, '.env.local'), 'utf8')).toBe(`SLOT=wrong\nAPI_PORT=${start + 3}\n`);
     const jsonOutput = await readFile(path.join(directoryPath, 'env.json'), 'utf8');
-    expect(JSON.parse(jsonOutput)).toEqual({ API_PORT: start + 3, PORTO_SLOT: 1 });
+    expect(JSON.parse(jsonOutput)).toEqual({ API_PORT: start + 3, SLOT: 'wrong' });
   } finally {
     const closed = once(server, 'close');
     server.close();

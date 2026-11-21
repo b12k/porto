@@ -52,14 +52,11 @@ it('validates hooks without executing them and infers their slot arguments', () 
 it('validates library options through the Porto error system', async () => {
   const failure = reserve({
     size: 0,
-    vars: ['PORT', 'API_PORT', (_slot, port) => ({ API_URL: `http://localhost:${port}` })],
+    vars: ['PORT', 'API_PORT', (port, _slot) => ({ API_URL: `http://localhost:${port}` })],
   }).then(({ vars }) => {
     const { API_PORT, API_URL, PORT } = vars;
     const values: { API_PORT: number; API_URL: string; PORT: number } = { API_PORT, API_URL, PORT };
-    return {
-      ...values,
-      hasExactKeys: true satisfies IsEqual<keyof typeof vars, 'API_PORT' | 'API_URL' | 'PORT' | 'PORTO_SLOT'>,
-    };
+    return { ...values, hasExactKeys: true satisfies IsEqual<keyof typeof vars, 'API_PORT' | 'API_URL' | 'PORT'> };
   });
   await expect(failure).rejects.toBeInstanceOf(PortoError);
   await expect(failure).rejects.toHaveProperty('code', 'optionsInvalid');

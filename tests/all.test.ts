@@ -89,8 +89,8 @@ it('returns every released slot with saved values, including kept slots, and all
   const source =
     'const slots = await releaseAllSlots(); console.log(JSON.stringify(slots.map(slot => ({ index: slot.index, keep: slot.keep, port: slot.getPort(), vars: slot.vars }))));';
   expect(await runApi(source)).toEqual([
-    { index: 0, keep: true, port: start, vars: { API_PORT: start, PORTO_SLOT: 0 } },
-    { index: 1, keep: false, port: start + 2, vars: { API_PORT: start + 2, PORTO_SLOT: 1 } },
+    { index: 0, keep: true, port: start, vars: { API_PORT: start } },
+    { index: 1, keep: false, port: start + 2, vars: { API_PORT: start + 2 } },
   ]);
   expect(await runApi('console.log(JSON.stringify(await getAllSlots()));')).toEqual([]);
   expect(await runApi('console.log(JSON.stringify(await releaseAllSlots()));')).toEqual([]);

@@ -111,7 +111,7 @@ it('returns named variables and evaluates each factory once', async () => {
     const slot = await reserve({
       start: ${start}, size: 2, vars: [
         'API_PORT',
-        (_slot, port) => {
+        (port, _slot) => {
           calls += 1;
           return { DB_PORT: port, DB_URL: 'tcp://localhost:' + port };
         },
@@ -123,13 +123,13 @@ it('returns named variables and evaluates each factory once', async () => {
   expect(JSON.parse(stdout)).toMatchObject({
     calls: 1,
     firstPort: start,
-    reusedVars: { PORTO_SLOT: 0 },
+    reusedVars: { SLOT: 0 },
     slot: {
       firstPort: start,
       index: 0,
       lastPort: start + 1,
       ports: [start, start + 1],
-      vars: { API_PORT: start, DB_PORT: start + 1, DB_URL: `tcp://localhost:${start + 1}`, PORTO_SLOT: 0 },
+      vars: { API_PORT: start, DB_PORT: start + 1, DB_URL: `tcp://localhost:${start + 1}` },
     },
   });
 });

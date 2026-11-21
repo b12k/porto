@@ -86,11 +86,10 @@ const REGISTRY_SCHEMA = z
         const index = Number(key);
         return (
           record.firstPort === startPort + index * portsPerSlot &&
-          record.lastPort === record.firstPort + portsPerSlot - 1 &&
-          record.vars.PORTO_SLOT === index
+          record.lastPort === record.firstPort + portsPerSlot - 1
         );
       }),
-    { message: 'Slot bounds and PORTO_SLOT must match its slot index and the repository range.' },
+    { message: 'Slot bounds must match its slot index and the repository range.' },
   );
 
 type Registry = z.output<typeof REGISTRY_SCHEMA>;
