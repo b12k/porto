@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { parseOptions } from '../src/schemas';
 import { fetchFreeRange } from './fixture';
 
 const execFileAsync = promisify(execFile);
@@ -48,7 +47,9 @@ async function expireRecords() {
   const contents = await readFile(registryPath, 'utf8');
   await writeFile(
     registryPath,
-    contents.replaceAll(/"lastUsedAt"\s*:\s*"[^"]+"/gu, '"lastUsedAt":"2000-01-01T00:00:00.000Z"'),
+    contents
+      .replaceAll(/"lastUsedAt"\s*:\s*"[^"]+"/gu, '"lastUsedAt":"2000-01-01T00:00:00.000Z"')
+      .replaceAll(/"expiresAt"\s*:\s*"[^"]+"/gu, '"expiresAt":"2000-01-01T00:00:00.000Z"'),
   );
 }
 
@@ -63,7 +64,7 @@ async function createWorktree() {
 }
 
 async function runApi(source: string, cwd = repositoryPath) {
-  const script = `const { cleanup, current, release, reserve, stats } = await import(${JSON.stringify(apiUrl)}); ${source}`;
+  const script = `const { cleanupSlots, getAllSlots, getSlot, releaseSlot, reserve } = await import(${JSON.stringify(apiUrl)}); ${source}`;
   const { stdout } = await execFileAsync(process.execPath, ['--import', tsxUrl, '--input-type=module', '-e', script], {
     cwd,
   });
@@ -97,41 +98,39 @@ afterEach(async () => {
   await rm(targetPath, { force: true, recursive: true });
 });
 
-it('defaults new reservations to keep false and centralizes optional numeric defaults', async () => {
-  expect(parseOptions({})).toEqual({ idleTtlMinutes: 60, size: 10, start: 10_000 });
-  expect(parseOptions({ size: undefined, start: undefined })).toEqual({ idleTtlMinutes: 60, size: 10, start: 10_000 });
-  expect(await runApi(buildReserveSource())).toBe('');
-  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await stats()));'))).toMatchObject([
-    { keep: false },
-  ]);
+it('uses the default range, idle limit and keep settings for new reservations', async () => {
+  const stdout = await runApi('console.log(JSON.stringify(await reserve({ size: undefined, start: undefined })));');
+  expect(JSON.parse(stdout)).toMatchObject({ idleTtlMinutes: 60, keep: false });
+  const registryContents = await readFile(getRegistryPath(), 'utf8');
+  expect(JSON.parse(registryContents)).toMatchObject({ portsPerSlot: 10, startPort: 10_000 });
 });
 
 it('returns named variables and evaluates each factory once', async () => {
   const stdout = await runApi(`
     let calls = 0;
-    const block = await reserve({
+    const slot = await reserve({
       start: ${start}, size: 2, vars: [
         'API_PORT',
-        (_block, port) => {
+        (_slot, port) => {
           calls += 1;
           return { DB_PORT: port, DB_URL: 'tcp://localhost:' + port };
         },
       ],
     });
     const reused = await reserve({ start: ${start}, size: 2 });
-    process.stdout.write(JSON.stringify({ block, calls, firstPort: block.getPort(), reusedVars: reused.vars }));
+    process.stdout.write(JSON.stringify({ slot, calls, firstPort: slot.getPort(), reusedVars: reused.vars }));
   `);
-  expect(JSON.parse(stdout)).toEqual({
-    block: {
-      end: start + 1,
-      index: 0,
-      ports: [start, start + 1],
-      start,
-      vars: { API_PORT: start, DB_PORT: start + 1, DB_URL: `tcp://localhost:${start + 1}` },
-    },
+  expect(JSON.parse(stdout)).toMatchObject({
     calls: 1,
     firstPort: start,
-    reusedVars: {},
+    reusedVars: { PORTO_SLOT: 0 },
+    slot: {
+      firstPort: start,
+      index: 0,
+      lastPort: start + 1,
+      ports: [start, start + 1],
+      vars: { API_PORT: start, DB_PORT: start + 1, DB_URL: `tcp://localhost:${start + 1}`, PORTO_SLOT: 0 },
+    },
   });
 });
 
@@ -151,26 +150,26 @@ it('preserves kept reservations through idle cleanup and repeated reserve withou
   await runApi(buildReserveSource(true));
   await expireRecords();
   expect(
-    JSON.parse(await runApi('await cleanup(); process.stdout.write(JSON.stringify(await stats()));')),
+    JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
   ).toMatchObject([{ isExpired: false, keep: true }]);
   await runApi(buildReserveSource());
   await expireRecords();
   expect(
-    JSON.parse(await runApi('await cleanup(); process.stdout.write(JSON.stringify(await stats()));')),
+    JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
   ).toMatchObject([{ isExpired: false, keep: true }]);
 });
 
-it('does not recycle a kept block during another checkout reserve', async () => {
+it('does not recycle a kept slot during another checkout reserve', async () => {
   await runApi(buildReserveSource(true));
   await expireRecords();
   const worktreePath = await createWorktree();
   expect(
     await runApi(
-      `const block = await reserve({ size: 1, start: ${start} }); process.stdout.write(String(block.index));`,
+      `const slot = await reserve({ size: 1, start: ${start} }); process.stdout.write(String(slot.index));`,
       worktreePath,
     ),
   ).toBe('1');
-  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await stats()));'))).toMatchObject([
+  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await getAllSlots()));'))).toMatchObject([
     { keep: true },
     { keep: false },
   ]);
@@ -179,22 +178,26 @@ it('does not recycle a kept block during another checkout reserve', async () => 
 it('reenables idle cleanup when keep is explicitly false', async () => {
   await runApi(buildReserveSource(true));
   await runApi(buildReserveSource(false));
-  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await stats()));'))).toMatchObject([
+  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await getAllSlots()));'))).toMatchObject([
     { keep: false },
   ]);
   await expireRecords();
-  expect(JSON.parse(await runApi('await cleanup(); process.stdout.write(JSON.stringify(await stats()));'))).toEqual([]);
+  expect(
+    JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
+  ).toEqual([]);
 });
 
 it('requires free ports for explicit release even when a reservation is kept', async () => {
   await runApi(buildReserveSource(true));
   const listener = await createListener(start);
-  await expect(runApi('await release();')).rejects.toThrow('Cannot release reservations while ports are in use.');
-  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await stats()));'))).toMatchObject([
+  await expect(runApi('await releaseSlot();')).rejects.toThrow('Cannot release reservations while ports are in use.');
+  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await getAllSlots()));'))).toMatchObject([
     { keep: true },
   ]);
   await closeListener(listener.server);
-  expect(JSON.parse(await runApi('await release(); process.stdout.write(JSON.stringify(await stats()));'))).toEqual([]);
+  expect(
+    JSON.parse(await runApi('await releaseSlot(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
+  ).toEqual([]);
 });
 
 it('uses the saved host for release and cleanup', async () => {
@@ -202,15 +205,17 @@ it('uses the saved host for release and cleanup', async () => {
   await runApi(`await reserve(${JSON.stringify({ host, size: 1, start })});`);
   await expireRecords();
   const { server } = await createListener(start, host);
-  await expect(runApi('await release();')).rejects.toThrow('Cannot release reservations while ports are in use.');
+  await expect(runApi('await releaseSlot();')).rejects.toThrow('Cannot release reservations while ports are in use.');
   expect(
-    JSON.parse(await runApi('await cleanup(); process.stdout.write(JSON.stringify(await stats()));')),
-  ).toMatchObject([{ host, start }]);
+    JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
+  ).toMatchObject([{ firstPort: start, host }]);
   await closeListener(server);
-  expect(JSON.parse(await runApi('await cleanup(); process.stdout.write(JSON.stringify(await stats()));'))).toEqual([]);
+  expect(
+    JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
+  ).toEqual([]);
 });
 
 it('rejects invalid keep values before storing a reservation', async () => {
   await expect(runApi(`await reserve({ keep: 'yes', size: 1, start: ${start} });`)).rejects.toThrow('keep');
-  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await stats()));'))).toEqual([]);
+  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await getAllSlots()));'))).toEqual([]);
 });

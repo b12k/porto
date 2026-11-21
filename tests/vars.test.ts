@@ -4,21 +4,21 @@ import { setImmediate } from 'node:timers/promises';
 import type { Vars } from '../src/vars';
 
 import { PortoError } from '../src/error';
-import { buildBlock } from '../src/ports';
-import { assertVarsFit, mapBlockToVars, parseVarEntries, parseVars, VARS_SCHEMA } from '../src/vars';
+import { buildSlot } from '../src/ports';
+import { assertVarsFit, mapSlotToVars, parseVarEntries, parseVars, VARS_SCHEMA } from '../src/vars';
 
-function createSpecialVar(_block: number, port: number) {
+function createSpecialVar(_slot: number, port: number) {
   return { ['__proto__']: port };
 }
 
 it('shares one indexed port across variables from the same factory', () => {
-  const portBlock = buildBlock({ index: 2, size: 3, start: 1000 });
+  const portSlot = buildSlot({ firstPort: 1006, lastPort: 1008 }, 2);
   const vars: Vars = [
     'API_PORT',
-    (block, port, idx) => ({ CLIENT_PORT: port, CLIENT_URL: `http://wt${block}.localhost:${port}/${idx}` }),
+    (slot, port, idx) => ({ CLIENT_PORT: port, CLIENT_URL: `http://wt${slot}.localhost:${port}/${idx}` }),
     'LAST_PORT',
   ];
-  expect(mapBlockToVars(portBlock, parseVarEntries(vars))).toEqual({
+  expect(mapSlotToVars(portSlot, parseVarEntries(vars))).toEqual({
     API_PORT: 1006,
     CLIENT_PORT: 1007,
     CLIENT_URL: 'http://wt2.localhost:1007/1',
@@ -27,9 +27,9 @@ it('shares one indexed port across variables from the same factory', () => {
 });
 
 it('uses the same indexed semantics for CLI templates and structured vars', () => {
-  const block = buildBlock({ index: 2, size: 4, start: 1000 });
-  const vars = parseVars('API_PORT;CLIENT_HOST=wt{{block}}.localhost;URL=http://localhost:{{port}}/{{port}};LAST_PORT');
-  expect(mapBlockToVars(block, vars)).toEqual({
+  const slot = buildSlot({ firstPort: 1008, lastPort: 1011 }, 2);
+  const vars = parseVars('API_PORT;CLIENT_HOST=wt{{slot}}.localhost;URL=http://localhost:{{port}}/{{port}};LAST_PORT');
+  expect(mapSlotToVars(slot, vars)).toEqual({
     API_PORT: 1008,
     CLIENT_HOST: 'wt2.localhost',
     LAST_PORT: 1011,
@@ -39,14 +39,14 @@ it('uses the same indexed semantics for CLI templates and structured vars', () =
 
 it('validates without executing factories and preserves their identities', () => {
   let callsCount = 0;
-  function createHost(block: number) {
+  function createHost(slot: number) {
     callsCount += 1;
-    return { HOST: `wt${block}.localhost` };
+    return { HOST: `wt${slot}.localhost` };
   }
   const vars = parseVarEntries([createHost]);
   expect(callsCount).toBe(0);
   expect(vars[0]).toBe(createHost);
-  expect(mapBlockToVars(buildBlock({ index: 2, size: 1, start: 1000 }), vars)).toEqual({ HOST: 'wt2.localhost' });
+  expect(mapSlotToVars(buildSlot({ firstPort: 1002, lastPort: 1002 }, 2), vars)).toEqual({ HOST: 'wt2.localhost' });
   expect(callsCount).toBe(1);
 });
 
@@ -96,18 +96,18 @@ it.each([
   ['infinity', { TITLE: Number.POSITIVE_INFINITY }],
 ])('rejects factory output with %s', (_label, returned) => {
   const vars = VARS_SCHEMA.parse([() => returned]);
-  expect(() => mapBlockToVars(buildBlock({ index: 0, size: 1, start: 1000 }), vars)).toThrow(PortoError);
+  expect(() => mapSlotToVars(buildSlot({ firstPort: 1000, lastPort: 1000 }, 0), vars)).toThrow(PortoError);
 });
 
 it('rejects duplicate output names from strings and factories', () => {
-  const block = buildBlock({ index: 0, size: 2, start: 1000 });
+  const slot = buildSlot({ firstPort: 1000, lastPort: 1001 }, 0);
   for (const vars of [
     ['__proto__', createSpecialVar],
     [createSpecialVar, '__proto__'],
     [createSpecialVar, createSpecialVar],
   ]) {
     const entries = parseVarEntries(vars);
-    expect(() => mapBlockToVars(block, entries)).toThrow('Duplicate: __proto__.');
+    expect(() => mapSlotToVars(slot, entries)).toThrow('Duplicate: __proto__.');
   }
 });
 
@@ -120,7 +120,7 @@ it('wraps factory errors with the entry number and the original cause', () => {
         throw factoryError;
       },
     ]);
-    mapBlockToVars(buildBlock({ index: 0, size: 1, start: 1000 }), entries);
+    mapSlotToVars(buildSlot({ firstPort: 1000, lastPort: 1000 }, 0), entries);
   } catch (error) {
     mappingError = error;
   }
@@ -139,15 +139,15 @@ it('rejects async factories without leaving an unhandled rejection', async () =>
       throw new Error('Async factory failed.');
     },
   ]);
-  expect(() => mapBlockToVars(buildBlock({ index: 0, size: 1, start: 1000 }), vars)).toThrow(PortoError);
+  expect(() => mapSlotToVars(buildSlot({ firstPort: 1000, lastPort: 1000 }, 0), vars)).toThrow(PortoError);
   await setImmediate();
   expect(callsCount).toBe(1);
 });
 
 it('preserves special property names and JSON-compatible template strings', () => {
-  const block = buildBlock({ index: 0, size: 3, start: 1000 });
+  const slot = buildSlot({ firstPort: 1000, lastPort: 1002 }, 0);
   const vars = parseVars('__proto__={{port}};constructor;TITLE=Bob\'s "dev"');
-  const environment = mapBlockToVars(block, vars);
+  const environment = mapSlotToVars(slot, vars);
   expect(Object.hasOwn(environment, '__proto__')).toBe(true);
   expect(environment).toEqual({ ['__proto__']: '1000', constructor: 1001, TITLE: 'Bob\'s "dev"' });
 });

@@ -21,24 +21,24 @@ async function fetchGitContext() {
       '--git-common-dir',
       '--absolute-git-dir',
     ]);
-    const [worktreePath, commonPath, gitPath] = stdout.split(/\r?\n/u);
-    if (!worktreePath || !commonPath || !gitPath) throw new Error('Missing Git paths.');
+    const [rootPath, commonPath, gitPath] = stdout.split(/\r?\n/u);
+    if (!rootPath || !commonPath || !gitPath) throw new Error('Missing Git paths.');
 
-    const [worktree, commonDirectory, gitDirectory] = await Promise.all([
-      realpath(worktreePath),
+    const [worktreePath, commonDirectory, gitDirectory] = await Promise.all([
+      realpath(rootPath),
       realpath(commonPath),
       realpath(gitPath),
     ]);
-    return { commonDirectory, worktree, worktreeId: getWorktreeId(commonDirectory, gitDirectory) };
+    return { commonDirectory, worktreeId: getWorktreeId(commonDirectory, gitDirectory), worktreePath };
   } catch (error) {
     throw new PortoError('worktreeNotFound', undefined, { cause: error });
   }
 }
 
-async function fetchLinkedWorktreeId(commonDirectory: string, worktree: string) {
-  const gitLink = await readFile(path.join(worktree, '.git'), 'utf8');
+async function fetchLinkedWorktreeId(commonDirectory: string, worktreePath: string) {
+  const gitLink = await readFile(path.join(worktreePath, '.git'), 'utf8');
   const gitPath = /^gitdir: (?<gitPath>.+)\r?\n?$/u.exec(gitLink)?.groups?.['gitPath'];
-  return gitPath && getWorktreeId(commonDirectory, await realpath(path.resolve(worktree, gitPath)));
+  return gitPath && getWorktreeId(commonDirectory, await realpath(path.resolve(worktreePath, gitPath)));
 }
 
 async function listWorktreePaths(commonDirectory: string) {
@@ -51,9 +51,9 @@ async function listWorktreePaths(commonDirectory: string) {
         return;
       }
       try {
-        const worktree = await realpath(location.slice('worktree '.length));
-        const worktreeId = index === 0 ? '.' : await fetchLinkedWorktreeId(commonDirectory, worktree);
-        if (worktreeId) worktreePathsById.set(worktreeId, worktree);
+        const worktreePath = await realpath(location.slice('worktree '.length));
+        const worktreeId = index === 0 ? '.' : await fetchLinkedWorktreeId(commonDirectory, worktreePath);
+        if (worktreeId) worktreePathsById.set(worktreeId, worktreePath);
       } catch (error) {
         if (!checkIsFileMissing(error)) throw error;
       }

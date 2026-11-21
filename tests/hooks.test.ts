@@ -44,7 +44,7 @@ function runCli(args: Array<string>, cwd = directoryPath) {
 async function writeConfig(properties: string, configStart = start) {
   await writeFile(
     path.join(directoryPath, 'porto.config.ts'),
-    `import { current, defineConfig } from ${JSON.stringify(apiUrl)};
+    `import { defineConfig, getSlot } from ${JSON.stringify(apiUrl)};
      import { appendFile, readFile } from 'node:fs/promises';
      import { writeFileSync } from 'node:fs';
      export default defineConfig({ start: ${configStart}, size: 2, ${properties} });`,
@@ -66,50 +66,49 @@ afterEach(async () => {
   await rm(targetPath, { force: true, recursive: true });
 });
 
-it('awaits onReserved after exports and registry unlock, including reused blocks', async () => {
+it('awaits onReserved after exports and registry unlock, including reused slots', async () => {
   await writeConfig(`env: true, jsonFile: 'ports.json',
-    async onReserved(block, ports) {
-      const [reserved] = await current();
+    async onReserved(slot, ports) {
+      const reserved = await getSlot();
       const env = await readFile('.env', 'utf8');
       const json = JSON.parse(await readFile('ports.json', 'utf8'));
-      if (reserved?.start !== block.start || json.index !== block.index || env !== 'PORTO_BLOCK=' + block.index + '\\n') {
+      if (reserved?.firstPort !== slot.firstPort || json.index !== slot.index || env !== 'PORTO_SLOT=' + slot.index + '\\n') {
         throw new Error('Hook ran before reservation or exports completed.');
       }
-      await appendFile('reserved.txt', block.index + ':' + ports.join(',') + '\\n');
+      await appendFile('reserved.txt', slot.index + ':' + ports.join(',') + '\\n');
     }`);
   const first = await runCli(['reserve']);
   const second = await runCli(['reserve']);
   expect(first.stdout).toBe('0\n');
   expect(second.stdout).toBe('0\n');
   expect(await readFile(path.join(directoryPath, 'reserved.txt'), 'utf8')).toBe('0:\n0:\n');
-  const { stdout } = await runCli(['stats', '--json']);
+  const { stdout } = await runCli(['show', '--all', '--json']);
   expect(JSON.parse(stdout)).toMatchObject([{ ports: [] }]);
 });
 
 it('passes one port per variable entry to onReserved even when it produces multiple variables', async () => {
-  await writeConfig(`vars: [(_block, port) => ({ API_PORT: port, API_PORT_ALIAS: port })], onReserved(block, ports) {
-    if (ports[0] !== block.getPort()) throw new Error('Missing assigned port.');
-    writeFileSync('reserved.json', JSON.stringify({ index: block.index, ports }));
+  await writeConfig(`vars: [(_slot, port) => ({ API_PORT: port, API_PORT_ALIAS: port })], onReserved(slot, ports) {
+    if (ports[0] !== slot.getPort()) throw new Error('Missing assigned port.');
+    writeFileSync('reserved.json', JSON.stringify({ index: slot.index, ports }));
   }`);
   const { stdout } = await runCli(['reserve', '--json']);
-  expect(JSON.parse(stdout)).toEqual({ API_PORT: start, API_PORT_ALIAS: start });
+  expect(JSON.parse(stdout)).toEqual({ API_PORT: start, API_PORT_ALIAS: start, PORTO_SLOT: 0 });
   const marker = await readFile(path.join(directoryPath, 'reserved.json'), 'utf8');
   expect(JSON.parse(marker)).toEqual({ index: 0, ports: [start] });
 });
 
-it('calls onReleased once per block with saved assigned ports after config changes', async () => {
-  const hooks = `async onReleased(block, ports) {
-    if ((await current()).length !== 0) throw new Error('Hook ran before release completed.');
-    await appendFile('released.txt', block.start + ':' + ports.join(',') + '\\n');
+it('calls onReleased for the current slot with saved assigned ports after config changes', async () => {
+  const hooks = `async onReleased(slot, ports) {
+    if ((await getSlot()) !== undefined) throw new Error('Hook ran before release completed.');
+    await appendFile('released.txt', slot.firstPort + ':' + ports.join(',') + '\\n');
   }`;
-  await writeConfig(`vars: [(_block, port) => ({ API_PORT: port, API_PORT_ALIAS: port })], ${hooks}`);
+  await writeConfig(`vars: [(_slot, port) => ({ API_PORT: port, API_PORT_ALIAS: port })], ${hooks}`);
   await runCli(['reserve']);
-  await runCli(['reserve', '--start', String(start + 8), '--size', '1']);
   await writeConfig(hooks, start + 10);
   await runCli(['release']);
   const markerPath = path.join(directoryPath, 'released.txt');
   const markers = await readFile(markerPath, 'utf8');
-  expect(markers.trim().split('\n').toSorted()).toEqual([`${start}:${start}`, `${start + 8}:${start + 8}`].toSorted());
+  expect(markers).toBe(`${start}:${start}\n`);
 });
 
 it('does not call onReleased when the current checkout has no reservations', async () => {
@@ -118,22 +117,25 @@ it('does not call onReleased when the current checkout has no reservations', asy
   await expect(readFile(path.join(directoryPath, 'released.txt'))).rejects.toThrow(/ENOENT/u);
 });
 
-it('releases only the current checkout and reports only its assigned ports', async () => {
-  await writeConfig(`vars: ['API_PORT'], onReleased(block, ports) {
-    writeFileSync('released.json', JSON.stringify({ index: block.index, ports }));
+it('defaults to the current checkout and passes the selected slot to release hooks', async () => {
+  await writeConfig(`vars: ['API_PORT'], onReleased(slot, ports) {
+    writeFileSync('released.json', JSON.stringify({ index: slot.index, ports }));
   }`);
   await runCli(['reserve']);
   const otherPath = await createWorktree();
   await runCli(['reserve', '--start', String(start), '--size', '2'], otherPath);
   await runCli(['release']);
-  const { stdout } = await runCli(['stats', '--json']);
-  expect(JSON.parse(stdout)).toMatchObject([{ ports: [], start: start + 2 }]);
+  const { stdout } = await runCli(['show', '--all', '--json']);
+  expect(JSON.parse(stdout)).toMatchObject([{ firstPort: start + 2, ports: [] }]);
   const marker = await readFile(path.join(directoryPath, 'released.json'), 'utf8');
   expect(JSON.parse(marker)).toEqual({ index: 0, ports: [start] });
+  await runCli(['release', '1']);
+  const selectedMarker = await readFile(path.join(directoryPath, 'released.json'), 'utf8');
+  expect(JSON.parse(selectedMarker)).toEqual({ index: 1, ports: [] });
 });
 
 it('keeps previously issued ports until release when vars change or are omitted', async () => {
-  const hooks = `onReleased(block, ports) { writeFileSync('released.json', JSON.stringify(ports)); }`;
+  const hooks = `onReleased(slot, ports) { writeFileSync('released.json', JSON.stringify(ports)); }`;
   await writeConfig(`vars: ['API_PORT'], ${hooks}`);
   await runCli(['reserve']);
   await writeConfig(`vars: ['API_PORT', 'OTHER_PORT'], ${hooks}`);
@@ -154,7 +156,7 @@ it('does not call onReleased when a busy port prevents release', async () => {
   await once(server, 'listening');
   await expect(runCli(['release'])).rejects.toThrow('Cannot release reservations while ports are in use.');
   await expect(readFile(path.join(directoryPath, 'released.txt'))).rejects.toThrow(/ENOENT/u);
-  const { stdout } = await runCli(['stats', '--json']);
+  const { stdout } = await runCli(['show', '--all', '--json']);
   expect(JSON.parse(stdout)).toHaveLength(1);
 });
 
@@ -163,8 +165,8 @@ it('reports a synchronous onReserved failure without rolling back the saved rese
   const failure = runCli(['reserve']);
   await expect(failure).rejects.toMatchObject({ code: 1, stdout: '' });
   await expect(failure).rejects.toThrow('onReserved: reserve hook failed');
-  const { stdout } = await runCli(['current', '--json']);
-  expect(JSON.parse(stdout)).toEqual({ end: start + 1, index: 0, start });
+  const { stdout } = await runCli(['show', '--json']);
+  expect(JSON.parse(stdout)).toMatchObject({ firstPort: start, index: 0, lastPort: start + 1 });
 });
 
 it('leaves the registry unchanged when a variable factory fails', async () => {
@@ -181,16 +183,15 @@ it('leaves the registry unchanged when a variable factory fails', async () => {
   expect(await readFile(registryPath, 'utf8')).toBe(registry);
 });
 
-it('waits for the remaining release hooks before reporting a failure', async () => {
-  await writeConfig(`async onReleased(block) {
-    if (block.start === ${start}) throw new Error('release hook failed');
+it('awaits an asynchronous release hook before reporting its failure', async () => {
+  await writeConfig(`async onReleased() {
     await new Promise((resolve) => setImmediate(resolve));
-    process.stderr.write('second hook finished\\n');
+    process.stderr.write('hook finished\\n');
+    throw new Error('release hook failed');
   }`);
   await runCli(['reserve']);
-  await runCli(['reserve', '--start', String(start + 8), '--size', '1']);
-  const expectedStderr: unknown = expect.stringMatching(/second hook finished[\s\S]*onReleased: release hook failed/u);
+  const expectedStderr: unknown = expect.stringMatching(/hook finished[\s\S]*onReleased: release hook failed/u);
   await expect(runCli(['release'])).rejects.toMatchObject({ code: 1, stderr: expectedStderr, stdout: '' });
-  const { stdout } = await runCli(['stats', '--json']);
+  const { stdout } = await runCli(['show', '--all', '--json']);
   expect(JSON.parse(stdout)).toEqual([]);
 });

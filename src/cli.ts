@@ -6,9 +6,9 @@ import updateNotifier from 'update-notifier';
 
 import type { PortoConfig } from './config';
 
-import { applyReserveDefaults, fetchConfig, name, parseConfig, version } from './config';
+import { fetchConfig, name, parseConfig, version } from './config';
 import { fetchGitContext } from './git';
-import { BusyPortsError, cleanup, current, PortoError, release, stats } from './index';
+import { BusyPortsError, cleanupSlots, getAllSlots, getSlot, PortoError, releaseAllSlots, releaseSlot } from './index';
 import { logError } from './log';
 import {
   fetchExportPaths,
@@ -27,13 +27,13 @@ type ReserveFlags = Omit<PortoConfig, 'idleTtlMinutes' | 'vars'> & {
   vars?: false | string;
 };
 
-async function fetchSettings(flags: ReserveFlags, command: Command, worktree: string) {
-  const configured = await fetchConfig(worktree);
+async function fetchSettings(flags: ReserveFlags, command: Command, worktreePath: string) {
+  const configured = await fetchConfig(worktreePath);
   const { idle, json, vars, ...overrides } = pickBy(flags, (_flag, key) => command.getOptionValueSource(key) === 'cli');
   const explicit = parseConfig({ ...overrides, ...(idle === undefined ? {} : { idleTtlMinutes: idle }) });
   let entries = configured.vars;
   if (vars !== undefined) entries = vars === false ? undefined : parseVars(vars);
-  return { ...applyReserveDefaults({ ...configured, ...explicit, vars: entries }), json: json ?? false };
+  return { ...configured, ...explicit, json: json ?? false, vars: entries };
 }
 
 async function runHook(hookName: string, hook: () => Promise<void> | void) {
@@ -52,19 +52,19 @@ function writeOutput(contents: string) {
 
 async function handleReserve(flags: ReserveFlags, command: Command) {
   const git = await fetchGitContext();
-  const { vars: entries, ...settings } = await fetchSettings(flags, command, git.worktree);
-  const { environmentPath, jsonPath } = await fetchExportPaths(settings, git.commonDirectory);
-  const prepared = await commitReservation({ ...settings, git, vars: entries }, ({ ports, vars, ...block }) => {
-    const environment = entries === undefined ? undefined : vars;
-    const output = settings.silent ? undefined : formatReserveOutput(block, environment, settings.json);
-    return { block, environment, output, ports };
+  const { json, onReserved, vars: entries, ...settings } = await fetchSettings(flags, command, git.worktreePath);
+  const prepared = await commitReservation(git, { ...settings, vars: entries }, async (slot) => {
+    const paths = await fetchExportPaths(slot, git.commonDirectory);
+    const environment = entries === undefined ? undefined : slot.vars;
+    const output = slot.silent ? undefined : formatReserveOutput(slot, environment, json);
+    return { ...paths, environment, output, slot };
   });
-  const { block, environment, output, ports } = prepared;
-  if (jsonPath) await writeReserveJsonFile(jsonPath, block, environment);
+  const { environment, environmentPath, jsonPath, output, slot } = prepared;
+  if (jsonPath) await writeReserveJsonFile(jsonPath, slot, environment);
   if (environmentPath) {
-    await updateEnvironmentFile(environmentPath, environment ?? { PORTO_BLOCK: block.index }, git.commonDirectory);
+    await updateEnvironmentFile(environmentPath, slot.vars, git.commonDirectory);
   }
-  await runHook('onReserved', () => settings.onReserved?.(block, ports));
+  if (onReserved) await runHook('onReserved', () => onReserved(slot, slot.ports));
   if (output !== undefined) writeOutput(output);
 }
 
@@ -77,10 +77,10 @@ updateNotifier({
 
 cli
   .command('reserve', { isDefault: true })
-  .description('Reserve a stable TCP port block for the current checkout')
+  .description('Reserve a stable TCP port slot for the current checkout')
   .option('--start <port>', 'First port of the range (default: 10000)', Number)
   .option('--host <host>', 'Host to check for busy ports (default: detect local addresses)')
-  .option('--size <count>', 'Number of ports in each block (default: 10)', Number)
+  .option('--size <count>', 'Number of ports in each slot (default: 10)', Number)
   .option('--idle <minutes>', 'Idle TTL in minutes (default: 60)', Number)
   .option('--vars <entries>', 'NAME or NAME=template variables (| shares a port, ; starts the next)')
   .option('--no-vars', 'Ignore configured variables')
@@ -97,37 +97,38 @@ cli
   .action(handleReserve);
 
 cli
-  .command('current')
-  .description('Read the reservations of the current checkout')
+  .command('show')
+  .argument('[slot-number]', 'Slot index (default: current checkout)', (index) => Number(index.trim() || Number.NaN))
+  .description('Show the current checkout slot or select slots by index or --all')
+  .option('--all', 'Show all slots in this repository')
   .option('--json', 'Print JSON to stdout')
-  .action(async (flags: ReserveFlags) => {
-    const blocks = await current();
-    if (blocks.length === 0) throw new PortoError('reservationNotFound');
-    writeOutput(
-      flags.json
-        ? JSON.stringify(blocks.length === 1 ? blocks[0] : blocks)
-        : blocks.map((block) => block.index).join('\n'),
-    );
-  });
-
-cli
-  .command('stats')
-  .description('List all reservations in this repository')
-  .option('--json', 'Print JSON to stdout')
-  .action(async (flags: ReserveFlags) => {
-    const reservations = await stats();
-    writeOutput(flags.json ? JSON.stringify(reservations) : formatStatsTable(reservations));
+  .action(async (slotIndex: number | undefined, flags: { all?: boolean; json?: boolean }) => {
+    if (flags.all && slotIndex !== undefined) throw new PortoError('slotSelectionInvalid');
+    if (flags.all) {
+      const reservedSlots = await getAllSlots();
+      writeOutput(flags.json ? JSON.stringify(reservedSlots) : formatStatsTable(reservedSlots));
+      return;
+    }
+    const slot = await getSlot(slotIndex);
+    if (slot === undefined) throw new PortoError('reservationNotFound');
+    writeOutput(flags.json ? JSON.stringify(slot) : String(slot.index));
   });
 
 cli
   .command('release')
-  .description('Release current checkout reservations if every port is free')
-  .action(async () => {
-    const { worktree } = await fetchGitContext();
-    const { onReleased } = await fetchConfig(worktree);
-    const blocks = await release();
+  .argument('[slot-number]', 'Slot index (default: current checkout)', (index) => Number(index.trim() || Number.NaN))
+  .description('Release the current checkout slot or select slots by index or --all')
+  .option('--all', 'Release all slots if every port is free')
+  .action(async (slotIndex: number | undefined, flags: { all?: boolean }) => {
+    if (flags.all && slotIndex !== undefined) throw new PortoError('slotSelectionInvalid');
+    const { worktreePath } = await fetchGitContext();
+    const { onReleased } = await fetchConfig(worktreePath);
+    const releasedSlots = flags.all
+      ? await releaseAllSlots()
+      : [await releaseSlot(slotIndex)].filter((slot) => slot !== undefined);
+    if (!onReleased) return;
     const results = await Promise.allSettled(
-      blocks.map(({ ports, ...block }) => runHook('onReleased', () => onReleased?.(block, ports))),
+      releasedSlots.map((slot) => runHook('onReleased', () => onReleased(slot, slot.ports))),
     );
     const failure = results.find((result) => result.status === 'rejected');
     if (failure) throw failure.reason;
@@ -136,7 +137,7 @@ cli
   .command('cleanup')
   .description('Remove idle reservations whose ports are all free')
   .action(async () => {
-    await cleanup();
+    await cleanupSlots();
   });
 cli.version(version);
 
@@ -146,8 +147,8 @@ try {
   if (error instanceof BusyPortsError) {
     process.stderr.write(
       `${formatTable(
-        ['BLOCK', 'PORT'],
-        error.ports.map(({ block, port }) => [String(block), String(port)]),
+        ['SLOT', 'PORT'],
+        error.ports.map(({ port, slot }) => [String(slot), String(port)]),
       )}\n`,
     );
   }

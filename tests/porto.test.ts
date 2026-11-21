@@ -50,7 +50,9 @@ async function expireRecords() {
   const contents = await readFile(registryPath, 'utf8');
   await writeFile(
     registryPath,
-    contents.replaceAll(/"lastUsedAt"\s*:\s*"[^"]+"/gu, '"lastUsedAt":"2000-01-01T00:00:00.000Z"'),
+    contents
+      .replaceAll(/"lastUsedAt"\s*:\s*"[^"]+"/gu, '"lastUsedAt":"2000-01-01T00:00:00.000Z"')
+      .replaceAll(/"expiresAt"\s*:\s*"[^"]+"/gu, '"expiresAt":"2000-01-01T00:00:00.000Z"'),
   );
 }
 
@@ -94,13 +96,13 @@ afterEach(async () => {
   await rm(resolvedPath, { force: true, recursive: true });
 });
 
-it('keeps a stable block and refreshes idle TTL before cleanup, even when ports are busy', async () => {
+it('keeps a stable slot and refreshes idle TTL before cleanup, even when ports are busy', async () => {
   const first = await runCli(reserveArgs('--json'));
-  expect(JSON.parse(first.stdout)).toEqual({ end: start + 1, index: 0, start });
+  expect(JSON.parse(first.stdout)).toEqual({ firstPort: start, index: 0, lastPort: start + 1 });
   await expireRecords();
   await createListener(start);
   expect(await runCliOutput(reserveArgs())).toBe('0\n');
-  expect(await runCliOutput(['stats', '--json'])).toContain('"isExpired":false');
+  expect(await runCliOutput(['show', '--all', '--json'])).toContain('"isExpired":false');
 });
 
 it('coordinates concurrent processes from the same and different worktrees', async () => {
@@ -114,7 +116,7 @@ it('coordinates concurrent processes from the same and different worktrees', asy
   expect(results[0].stdout).toBe(results[1].stdout);
   expect(results[2].stdout).toBe(results[3].stdout);
   expect(results[0].stdout).not.toBe(results[2].stdout);
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toHaveLength(2);
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toHaveLength(2);
 });
 
 it('keeps a reservation with a moved worktree and shows the new path', async () => {
@@ -123,27 +125,27 @@ it('keeps a reservation with a moved worktree and shows the new path', async () 
   expect(await runCliOutput(reserveArgs('--keep'), worktreePath)).toBe('0\n');
   await runGit(['worktree', 'move', worktreePath, movedPath]);
 
-  expect(await runCliOutput(['current'], movedPath)).toBe('0\n');
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toMatchObject([
-    { index: 0, keep: true, worktree: await realpath(movedPath) },
+  expect(await runCliOutput(['show'], movedPath)).toBe('0\n');
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toMatchObject([
+    { index: 0, keep: true, worktreePath: await realpath(movedPath) },
   ]);
   expect(await runCliOutput(reserveArgs(), movedPath)).toBe('0\n');
   await runCli(['release'], movedPath);
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toEqual([]);
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toEqual([]);
 });
 
 it('persists a refreshed reservation even with a submillisecond idle TTL', async () => {
   await runCli(reserveArgs('--idle', '0.000000001'));
   await runCli(reserveArgs('--idle', '0.000000001'));
-  expect(await runCliOutput(['current'])).toBe('0\n');
+  expect(await runCliOutput(['show'])).toBe('0\n');
 });
 
-it('skips a candidate with a busy IPv4 port and avoids overlapping configurations', async () => {
+it('skips busy and reserved slots within the repository range', async () => {
   await createListener(start);
   expect(await runCliOutput(reserveArgs())).toBe('1\n');
   const worktreePath = await createWorktree('overlap');
-  const result = await runCli(['reserve', '--start', String(start + 2), '--size', '1', '--json'], worktreePath);
-  expect(JSON.parse(result.stdout)).toEqual({ end: start + 4, index: 2, start: start + 4 });
+  const result = await runCli(reserveArgs('--json'), worktreePath);
+  expect(JSON.parse(result.stdout)).toEqual({ firstPort: start + 4, index: 2, lastPort: start + 5 });
 });
 
 it('reads from subdirectories without refreshing timestamps or cleaning expired records', async () => {
@@ -151,37 +153,37 @@ it('reads from subdirectories without refreshing timestamps or cleaning expired 
   await expireRecords();
   const nestedPath = path.join(repositoryPath, 'nested');
   await mkdir(nestedPath);
-  expect(await runCliOutput(['current'], nestedPath)).toBe('0\n');
+  expect(await runCliOutput(['show'], nestedPath)).toBe('0\n');
   const worktreePath = await realpath(repositoryPath);
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toMatchObject([
-    { isExpired: true, lastUsedAt: '2000-01-01T00:00:00.000Z', worktree: worktreePath },
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toMatchObject([
+    { isExpired: true, lastUsedAt: '2000-01-01T00:00:00.000Z', worktreePath },
   ]);
-  const table = await runCliOutput(['stats']);
+  const table = await runCliOutput(['show', '--all']);
   expect(table).toMatch(/WORKTREE +PATH +LAST USED/u);
   expect(table).toMatch(new RegExp(`repository  ${RegExp.escape(worktreePath)}  .+ years ago`, 'u'));
 });
 
-it('cleans only idle blocks with every port free', async () => {
+it('cleans only idle slots with every port free', async () => {
   const worktreePath = await createWorktree('cleanup');
   await runCli(reserveArgs());
   await runCli(reserveArgs(), worktreePath);
   await expireRecords();
   const { server } = await createListener(start);
   await runCli(['cleanup']);
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toHaveLength(1);
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toHaveLength(1);
   await closeListener(server);
   await runCli(['cleanup']);
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toEqual([]);
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toEqual([]);
 });
 
-it('keeps unexpired blocks and reuses the lowest block after idle cleanup', async () => {
+it('keeps unexpired slots and reuses the lowest slot after idle cleanup', async () => {
   const worktreePath = await createWorktree('reuse');
   await runCli(reserveArgs());
   await runCli(['cleanup']);
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toHaveLength(1);
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toHaveLength(1);
   await expireRecords();
   expect(await runCliOutput(reserveArgs(), worktreePath)).toBe('0\n');
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toHaveLength(1);
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toHaveLength(1);
 });
 
 it('recovers a stale process lock', async () => {
@@ -190,20 +192,19 @@ it('recovers a stale process lock', async () => {
   const staleAt = new Date(Date.now() - 20_000);
   await mkdir(lockPath);
   await utimes(lockPath, staleAt, staleAt);
-  expect(await runCliOutput(['current'])).toBe('0\n');
+  expect(await runCliOutput(['show'])).toBe('0\n');
 });
 
-it('releases all current ranges atomically or reports every busy port without deleting records', async () => {
+it('keeps the current slot when a busy port prevents release', async () => {
   await runCli(reserveArgs());
-  await runCli(['reserve', '--start', String(start + 20), '--size', '1']);
-  const { server } = await createListener(start + 20);
+  const { server } = await createListener(start + 1);
   const failure = runCli(['release']);
   await expect(failure).rejects.toMatchObject({ code: 1, stdout: '' });
-  await expect(failure).rejects.toThrow(String(start + 20));
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toHaveLength(2);
+  await expect(failure).rejects.toThrow(String(start + 1));
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toHaveLength(1);
   await closeListener(server);
   await runCli(['release']);
-  await expect(runCli(['current'])).rejects.toMatchObject({ code: 1, stdout: '' });
+  await expect(runCli(['show'])).rejects.toMatchObject({ code: 1, stdout: '' });
 });
 
 it('supports a worktree of a bare repository and rejects the bare directory itself', async () => {
@@ -213,7 +214,7 @@ it('supports a worktree of a bare repository and rejects the bare directory itse
   await runGit(['worktree', 'add', '--detach', worktreePath], barePath);
   expect(await runCliOutput(reserveArgs(), worktreePath)).toBe('0\n');
   const records: unknown = JSON.parse(await readFile(path.join(barePath, 'porto-registry.json'), 'utf8'));
-  expect(records).toHaveLength(1);
+  expect(records).toHaveProperty('slots.length', 1);
   await expect(runCli(reserveArgs(), barePath)).rejects.toThrow('working tree');
 });
 
@@ -225,15 +226,16 @@ it('fails closed on a corrupt registry and leaves its contents intact', async ()
   expect(await readFile(filePath, 'utf8')).toBe('{broken');
 });
 it('maps grouped names and templates into stdout, JSON, and env files', async () => {
-  const vars = 'API_PORT|CLIENT_HOST=wt{{block}}.localhost;URL=http://localhost:{{port}}/?port={{port}}|DB_PORT';
+  const vars = 'API_PORT|CLIENT_HOST=wt{{slot}}.localhost;URL=http://localhost:{{port}}/?port={{port}}|DB_PORT';
   const result = await runCli(reserveArgs('--vars', vars, '--json-file=ports.json', '--env'));
-  const output = `API_PORT=${start}\nCLIENT_HOST=wt0.localhost\nURL='http://localhost:${start + 1}/?port=${start + 1}'\nDB_PORT=${start + 1}\n`;
+  const output = `API_PORT=${start}\nCLIENT_HOST=wt0.localhost\nURL='http://localhost:${start + 1}/?port=${start + 1}'\nDB_PORT=${start + 1}\nPORTO_SLOT=0\n`;
   expect(result.stdout).toBe(output);
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
   expect(JSON.parse(jsonOutput)).toEqual({
     API_PORT: start,
     CLIENT_HOST: 'wt0.localhost',
     DB_PORT: start + 1,
+    PORTO_SLOT: 0,
     URL: `http://localhost:${start + 1}/?port=${start + 1}`,
   });
   expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe(output);
@@ -242,28 +244,27 @@ it('maps grouped names and templates into stdout, JSON, and env files', async ()
 it('preserves JSON template strings without requiring env quoting', async () => {
   const title = 'Bob\'s "dev"';
   const result = await runCli(reserveArgs('--vars', `TITLE=${title}`, '--json', '--json-file=ports.json'));
-  expect(JSON.parse(result.stdout)).toEqual({ TITLE: title });
-  expect(await readFile(path.join(repositoryPath, 'ports.json'), 'utf8')).toBe(result.stdout);
+  expect(JSON.parse(result.stdout)).toEqual({ PORTO_SLOT: 0, TITLE: title });
+  const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
+  expect(JSON.parse(jsonOutput)).toEqual({ PORTO_SLOT: 0, TITLE: title });
 });
 
 it('updates existing env keys and appends missing ones, preserving comments and CRLF', async () => {
   const envPath = path.join(repositoryPath, '.env.local');
   await writeFile(envPath, '# config\r\nexport API_PORT = 1 # keep\r\nOTHER="untouched"\r\nAPI_PORT=2\r\n');
-  await runCli(reserveArgs('--vars', 'API_PORT;HOST=wt{{block}}.localhost', '--env-file=.env.local'));
+  await runCli(reserveArgs('--vars', 'API_PORT;HOST=wt{{slot}}.localhost', '--env-file=.env.local'));
   expect(await readFile(envPath, 'utf8')).toBe(
-    `# config\r\nexport API_PORT = ${start} # keep\r\nOTHER="untouched"\r\nAPI_PORT=${start}\r\nHOST=wt0.localhost\r\n`,
+    `# config\r\nexport API_PORT = ${start} # keep\r\nOTHER="untouched"\r\nAPI_PORT=${start}\r\nHOST=wt0.localhost\r\nPORTO_SLOT=0\r\n`,
   );
 });
 
 it('preserves multiline env values and numeric filenames', async () => {
   const envPath = path.join(repositoryPath, '001');
-  await writeFile(envPath, 'TEXT="line one\nPORTO_BLOCK=inside\nline three"\nPORTO_BLOCK=9 # keep\n');
+  await writeFile(envPath, 'TEXT="line one\nPORTO_SLOT=inside\nline three"\nPORTO_SLOT=9 # keep\n');
   await runCli(reserveArgs('--json-file=000', '--env-file=001'));
   const jsonOutput = await readFile(path.join(repositoryPath, '000'), 'utf8');
-  expect(JSON.parse(jsonOutput)).toEqual({ end: start + 1, index: 0, start });
-  expect(await readFile(envPath, 'utf8')).toBe(
-    'TEXT="line one\nPORTO_BLOCK=inside\nline three"\nPORTO_BLOCK=0 # keep\n',
-  );
+  expect(JSON.parse(jsonOutput)).toEqual({ firstPort: start, index: 0, lastPort: start + 1, PORTO_SLOT: 0 });
+  expect(await readFile(envPath, 'utf8')).toBe('TEXT="line one\nPORTO_SLOT=inside\nline three"\nPORTO_SLOT=0 # keep\n');
 });
 
 it('rejects bad arguments, unknown commands and invalid mapping before allocating', async () => {
@@ -282,12 +283,12 @@ it('rejects bad arguments, unknown commands and invalid mapping before allocatin
       reserveArgs('--env-file'),
       ['unknown'],
       ['reserve', '--bogus'],
-      ['current', 'extra'],
+      ['show', 'extra'],
     ].map(async (args) => {
       await expect(runCli(args)).rejects.toMatchObject({ code: 1, stdout: '' });
     }),
   );
-  expect(JSON.parse(await runCliOutput(['stats', '--json']))).toEqual([]);
+  expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toEqual([]);
   expect(await runCliOutput(['--help'])).toContain('reserve');
   const manifest: unknown = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   const version = await runCliOutput(['--version']);
