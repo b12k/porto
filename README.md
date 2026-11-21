@@ -6,10 +6,10 @@
 
 💪 **Port reservations on steroids.**
 
-Porto reserves a range of TCP ports, called a slot, for each Git checkout or worktree.
+Porto reserves a range of TCP ports, called a slot, for each Git worktree.
 It checks for port conflicts and saves the slot for the next run.
 
-🧹 **It can haz cleanups.** When you reserve ports, Porto removes expired reservations if all their ports are free.
+🧹 **It can haz cleanups.** When you reserve ports, Porto removes expired slots if all their ports are free.
 
 ## 🚀 Install
 
@@ -59,23 +59,23 @@ porto cleanup
 | `reserve` | _**(default)**_ Allocate a port slot and print its index or variables.      |
 | `show`    | Show a slot. Use `--all` to show all slots.                                 |
 | `release` | Release a slot. Use `--all` to release all slots when their ports are free. |
-| `cleanup` | Remove expired reservations when their ports are free.                      |
+| `cleanup` | Remove expired slots when their ports are free.                             |
 
 #### `reserve` options
 
-| Option                                  | Default           | Action                                         |
-| --------------------------------------- | ----------------- | ---------------------------------------------- |
-| `--start <port>`                        | `10000`           | Set the first port of the range.               |
-| `--host <host>`                         | Local addresses   | Check this host for busy ports.                |
-| `--size <count>`                        | `10`              | Set the number of ports per slot.              |
-| `--idle <minutes>`                      | 60 minutes        | Set the idle time limit.                       |
-| `--keep` / `--no-keep`                  | Off for new slots | Keep the slot during idle cleanup.             |
-| `--vars <entries>` / `--no-vars`        | None              | Set or clear the variable list.                |
-| `--env` / `--no-env`                    | Off               | Turn env file output on or off.                |
-| `--env-file <file>`                     | `.env`            | Set the env file path and turn on env output.  |
-| `--json-file <file>` / `--no-json-file` | Off               | Set or clear the JSON output file.             |
-| `--json`                                | Off               | Print JSON to stdout. Also works with `show`.  |
-| `--silent` / `--no-silent`              | Off               | Hide or show the reservation result on stdout. |
+| Option                                  | Default           | Action                                        |
+| --------------------------------------- | ----------------- | --------------------------------------------- |
+| `--start <port>`                        | `10000`           | Set the first port of the range.              |
+| `--host <host>`                         | Local addresses   | Check this host for busy ports.               |
+| `--size <count>`                        | `10`              | Set the number of ports per slot.             |
+| `--idle <minutes>`                      | 60 minutes        | Set the idle time limit.                      |
+| `--keep` / `--no-keep`                  | Off for new slots | Keep the slot during idle cleanup.            |
+| `--vars <vars>` / `--no-vars`           | None              | Set or clear the variable list.               |
+| `--env` / `--no-env`                    | Off               | Turn env file output on or off.               |
+| `--env-file <file>`                     | `.env`            | Set the env file path and turn on env output. |
+| `--json-file <file>` / `--no-json-file` | Off               | Set or clear the JSON output file.            |
+| `--json`                                | Off               | Print JSON to stdout. Also works with `show`. |
+| `--silent` / `--no-silent`              | Off               | Hide or show the slot result on stdout.       |
 
 Use `-h` or `--help` for help. Use `-V` or `--version` for the version.
 
@@ -119,14 +119,14 @@ Run the same command again in this worktree to reuse its slot. A second worktree
 
 | Argument or option | Default              | Action                                |
 | ------------------ | -------------------- | ------------------------------------- |
-| `[slot-number]`    | This checkout's slot | Select a slot by index.               |
+| `[slot-number]`    | This worktree's slot | Select a slot by index.               |
 | `--all`            | Off                  | Select all slots for this repository. |
 
 Use a slot number or `--all`. If a port is busy, `release --all` keeps every slot.
 
 ### Config
 
-The CLI loads config for `reserve` and `release`. Create `porto.config.ts` or `porto.config.js` in your checkout. Porto searches from the current directory to the checkout root. If both files are in one directory, Porto uses the TypeScript file.
+The CLI loads config for `reserve` and `release`. Create `porto.config.ts` or `porto.config.js` in your worktree. Porto searches from the current directory to the worktree root. If both files are in one directory, Porto uses the TypeScript file.
 
 CLI options override config values. Config values override defaults.
 
@@ -178,7 +178,7 @@ Both hooks receive `(slot, ports)`, where `ports` lists the ports assigned to th
 
 ### API
 
-Run the API inside a Git checkout.
+Run the API inside a Git worktree.
 
 #### Get ports by offset
 
@@ -224,17 +224,17 @@ const { API_PORT, API_URL } = slot.vars;
 
 `reserve()` accepts `start`, `size`, `host`, `idleTtlMinutes`, `keep`, and `vars`. All six options are optional. Omit `start` and `size` to reuse the saved repository settings. Other options use the defaults in the config table.
 
-Each entry in `vars` uses one port. The example defines three custom variables with two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a reservation.
+Each entry in `vars` uses one port. The example defines three custom variables with two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a slot.
 
-#### Read and release reservations
+#### Read and release slots
 
 ```js
 import { cleanupSlots, getAllSlots, getSlot, releaseAllSlots, releaseSlot } from '@b12k/porto';
 
-const currentSlot = await getSlot(); // Current slot for this checkout
+const currentSlot = await getSlot(); // Current slot for this worktree
 const selectedSlot = await getSlot(1); // Slot #1
-const reservedSlots = await getAllSlots(); // All reserved slots for this repository
-const releasedSlot = await releaseSlot(); // Release this checkout's slot if its ports are free
+const slots = await getAllSlots(); // All slots for this repository
+const releasedSlot = await releaseSlot(); // Release this worktree's slot if its ports are free
 const releasedSelectedSlot = await releaseSlot(1); // Release slot #1 if its ports are free
 const releasedSlots = await releaseAllSlots(); // Release all slots if their ports are free
 const expiredSlots = await cleanupSlots(); // Release expired slots if their ports are free

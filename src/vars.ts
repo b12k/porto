@@ -64,9 +64,14 @@ function mapVarEntry(entry: VarEntry, slot: Pick<PortSlot, 'firstPort' | 'index'
   try {
     const variables: unknown = entry(slot.index, port, index);
     if (types.isPromise(variables)) {
+      // Attach a no-op handler to avoid unhandled rejection noise; async factories are unsupported.
       variables.catch(() => {
-        // Async factories are rejected below; observe their errors without awaiting them.
+        // Async factories are rejected below with mappingInvalid.
       });
+      throw new PortoError(
+        'mappingInvalid',
+        `Cannot create variables for entry ${index + 1}; async factories are not supported, return a plain object.`,
+      );
     }
     return VAR_RESULT_SCHEMA.parse(variables);
   } catch (error) {
@@ -91,11 +96,11 @@ function mapSlotToVars(slot: Pick<PortSlot, 'firstPort' | 'index'>, entries: Var
   return Object.fromEntries(environment);
 }
 
-function parseVar(entry: string) {
-  const separator = entry.indexOf('=');
-  const name = (separator === -1 ? entry : entry.slice(0, separator)).trim();
+function parseVar(source: string) {
+  const separator = source.indexOf('=');
+  const name = (separator === -1 ? source : source.slice(0, separator)).trim();
   if (separator === -1) return { name };
-  const template = entry.slice(separator + 1);
+  const template = source.slice(separator + 1);
   const result = VAR_TEXT_SCHEMA.safeParse(template);
   if (!result.success) {
     throw new PortoError('mappingInvalid', 'Vars templates must fit on one line.', { cause: result.error });

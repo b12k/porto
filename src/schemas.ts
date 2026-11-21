@@ -67,7 +67,7 @@ const REGISTRY_SCHEMA = z
       const records = slots.filter((record) => record !== null);
       return new Set(records.map((record) => record.worktreeId)).size === records.length;
     },
-    { message: 'Each checkout can have only one reservation.' },
+    { message: 'Each worktree can have only one slot.' },
   )
   .refine(
     ({ portsPerSlot, slots, startPort }) =>

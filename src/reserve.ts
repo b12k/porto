@@ -27,9 +27,10 @@ async function allocateRecord(registry: Registry, options: Omit<ReservationRecor
   for (let index = 0; index < slotsCount; index += 1) {
     const firstPort = startPort + index * portsPerSlot;
     const lastPort = firstPort + portsPerSlot - 1;
+    const isOccupied = slots[index] !== undefined && slots[index] !== null;
     // Check candidates in order without opening thousands of sockets at once.
     // oxlint-disable-next-line no-await-in-loop
-    if (!slots[index] && !(await checkHasBusyPort(firstPort, lastPort, options.host))) {
+    if (!isOccupied && !(await checkHasBusyPort(firstPort, lastPort, options.host))) {
       const record = { ...options, firstPort, lastPort, vars: { PORTO_SLOT: index } };
       slots[index] = record;
       return { index, record };
@@ -97,7 +98,7 @@ function commitReservation<Result>(
     registry.portsPerSlot = size;
     const now = Date.now();
     const existingIndex = registry.slots.findIndex((record) => record?.worktreeId === worktreeId);
-    const existingRecord = registry.slots[existingIndex];
+    const existingRecord = existingIndex === -1 ? undefined : registry.slots[existingIndex];
     const lastUsedAt = new Date(now).toISOString();
     const isKept = keep ?? existingRecord?.keep ?? false;
     const settings = {

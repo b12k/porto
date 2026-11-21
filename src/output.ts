@@ -9,7 +9,8 @@ import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
 import { getRegistryPath } from './registry';
 
-type Environment = Record<string, number | string>;
+type Environment = SlotVars;
+type SlotVars = Record<string, number | string>;
 
 // Match unrelated names too so their quoted values are skipped as a unit.
 const ENV_ASSIGNMENT_PATTERN =
@@ -73,38 +74,38 @@ async function fetchExportPaths(
   commonDirectory: string,
 ) {
   const jsonPath = settings.jsonFile ? await fetchCanonicalPath(path.resolve(settings.jsonFile)) : undefined;
-  const environmentPath = settings.env ? await fetchCanonicalPath(path.resolve(settings.envFile)) : undefined;
+  const envPath = settings.env ? await fetchCanonicalPath(path.resolve(settings.envFile)) : undefined;
   const arePathsEqual =
     jsonPath !== undefined &&
-    environmentPath !== undefined &&
-    normalizePathForComparison(jsonPath) === normalizePathForComparison(environmentPath);
+    envPath !== undefined &&
+    normalizePathForComparison(jsonPath) === normalizePathForComparison(envPath);
   if (arePathsEqual) throw new PortoError('exportInvalid', '--json-file and --env-file must use different files.');
   await assertExportPaths(
-    [jsonPath, environmentPath].filter((filePath) => filePath !== undefined),
+    [jsonPath, envPath].filter((filePath) => filePath !== undefined),
     getRegistryPath(commonDirectory),
   );
-  return { environmentPath, jsonPath };
+  return { envPath, jsonPath };
 }
 
-function formatEnvironmentValue(entry: number | string) {
-  const text = String(entry);
+function formatEnvironmentValue(value: number | string) {
+  const text = String(value);
   if (/^[A-Za-z0-9_./:@%+,-]*$/u.test(text)) return text;
   if (!text.includes("'")) return `'${text}'`;
   if (!text.includes('"') && !text.includes('\\')) return `"${text}"`;
   throw new PortoError('mappingInvalid', 'Value cannot be represented safely on a single env line.');
 }
 
-function formatEnvironment(environment: Environment) {
-  return Object.entries(environment)
-    .map(([name, entry]) => `${name}=${formatEnvironmentValue(entry)}`)
+function formatEnvironment(vars: SlotVars) {
+  return Object.entries(vars)
+    .map(([name, value]) => `${name}=${formatEnvironmentValue(value)}`)
     .join('\n');
 }
 
-function formatReserveOutput(slot: PortSlot, environment: Environment | undefined, isJson: boolean) {
+function formatReserveOutput(slot: PortSlot, vars: SlotVars | undefined, isJson: boolean) {
   if (isJson) {
-    return JSON.stringify(environment ?? { firstPort: slot.firstPort, index: slot.index, lastPort: slot.lastPort });
+    return JSON.stringify(vars ?? { firstPort: slot.firstPort, index: slot.index, lastPort: slot.lastPort });
   }
-  return environment ? formatEnvironment(environment) : String(slot.index);
+  return vars ? formatEnvironment(vars) : String(slot.index);
 }
 
 function formatTable(headers: Array<string>, rows: Array<Array<string>>) {
@@ -119,43 +120,43 @@ function formatTable(headers: Array<string>, rows: Array<Array<string>>) {
     .join('\n');
 }
 
-function formatStatsTable(reservations: Array<ReservationStats>) {
+function formatStatsTable(slots: Array<ReservationStats>) {
   const now = Date.now();
   return formatTable(
     ['SLOT', 'PORTS', 'WORKTREE', 'PATH', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
-    reservations.map((record) => [
-      String(record.index),
-      `${record.firstPort}-${record.lastPort}`,
-      path.basename(record.worktreePath) || record.worktreePath,
-      record.worktreePath,
-      formatDistance(record.lastUsedAt, now, { addSuffix: true }),
-      String(record.idleTtlMinutes),
-      record.keep ? 'yes' : 'no',
-      record.isExpired ? 'yes' : 'no',
+    slots.map((slot) => [
+      String(slot.index),
+      `${slot.firstPort}-${slot.lastPort}`,
+      path.basename(slot.worktreePath) || slot.worktreePath,
+      slot.worktreePath,
+      formatDistance(slot.lastUsedAt, now, { addSuffix: true }),
+      String(slot.idleTtlMinutes),
+      slot.keep ? 'yes' : 'no',
+      slot.isExpired ? 'yes' : 'no',
     ]),
   );
 }
 
-async function saveEnvironmentFile(filePath: string, environment: Environment) {
+async function saveEnvironmentFile(filePath: string, vars: SlotVars) {
   const contents = await fetchEnvironmentContents(filePath);
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
-  const pendingEntries = new Map(Object.entries(environment));
+  const pendingVars = new Map(Object.entries(vars));
   const updated = contents.replaceAll(
     ENV_ASSIGNMENT_PATTERN,
     (line: string, ...captures: [string, string, string, string, ...Array<unknown>]) => {
       const [prefix, name, separator, suffix] = captures;
-      const entry = Object.hasOwn(environment, name) ? environment[name] : undefined;
+      const entry = Object.hasOwn(vars, name) ? vars[name] : undefined;
       if (entry === undefined) return line;
-      pendingEntries.delete(name);
+      pendingVars.delete(name);
       return `${prefix}${name}${separator}${formatEnvironmentValue(entry)}${suffix}`;
     },
   );
-  const appended = formatEnvironment(Object.fromEntries(pendingEntries)).replaceAll('\n', lineEnding);
+  const appended = formatEnvironment(Object.fromEntries(pendingVars)).replaceAll('\n', lineEnding);
   const separator = updated.length > 0 && !updated.endsWith('\n') ? lineEnding : '';
   await writeFileAtomically(filePath, `${updated}${appended ? `${separator}${appended}${lineEnding}` : ''}`);
 }
 
-async function updateEnvironmentFile(filePath: string, environment: Environment, commonDirectory?: string) {
+async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDirectory?: string) {
   const targetPath = await fetchCanonicalPath(filePath);
   if (commonDirectory !== undefined) await assertExportPaths([targetPath], getRegistryPath(commonDirectory));
   const unlock = await lockfile.lock(targetPath, {
@@ -163,19 +164,14 @@ async function updateEnvironmentFile(filePath: string, environment: Environment,
     retries: { factor: 1, maxTimeout: 100, minTimeout: 100, retries: 200 },
   });
   try {
-    await saveEnvironmentFile(targetPath, environment);
+    await saveEnvironmentFile(targetPath, vars);
   } finally {
     await unlock();
   }
 }
 
-async function writeReserveJsonFile(filePath: string, slot: PortSlot, environment: Environment | undefined) {
-  const variables = environment ?? {
-    firstPort: slot.firstPort,
-    index: slot.index,
-    lastPort: slot.lastPort,
-    ...slot.vars,
-  };
+async function writeReserveJsonFile(filePath: string, slot: PortSlot, vars: SlotVars | undefined) {
+  const variables = vars ?? { firstPort: slot.firstPort, index: slot.index, lastPort: slot.lastPort, ...slot.vars };
   await writeFileAtomically(filePath, `${JSON.stringify(variables)}\n`);
 }
 
@@ -188,4 +184,4 @@ export {
   updateEnvironmentFile,
   writeReserveJsonFile,
 };
-export type { Environment };
+export type { Environment, SlotVars };

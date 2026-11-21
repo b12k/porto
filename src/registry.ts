@@ -8,11 +8,16 @@ import { PortoError } from './error';
 import { checkIsFileMissing, writeFileAtomically } from './files';
 import { REGISTRY_SCHEMA } from './schemas';
 
+const DEFAULT_START_PORT = 10_000;
+const DEFAULT_PORTS_PER_SLOT = 10;
+
 async function fetchRegistry(filePath: string): Promise<Registry> {
   try {
     return REGISTRY_SCHEMA.parse(JSON.parse(await readFile(filePath, 'utf8')));
   } catch (error) {
-    if (checkIsFileMissing(error)) return { portsPerSlot: 10, slots: [], startPort: 10_000 };
+    if (checkIsFileMissing(error)) {
+      return { portsPerSlot: DEFAULT_PORTS_PER_SLOT, slots: [], startPort: DEFAULT_START_PORT };
+    }
     throw new PortoError('registryInvalid', filePath, { cause: error });
   }
 }

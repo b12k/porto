@@ -22,10 +22,10 @@ const { name, version } = packageJson;
 
 function applyReserveDefaults(
   settings: Omit<PortoConfig, 'onReleased' | 'onReserved' | 'vars'>,
-  range: { portsPerSlot: number; startPort: number },
+  storedRange: { portsPerSlot: number; startPort: number },
 ) {
-  const size = settings.size ?? range.portsPerSlot;
-  const start = settings.start ?? range.startPort;
+  const size = settings.size ?? storedRange.portsPerSlot;
+  const start = settings.start ?? storedRange.startPort;
   if (start + size - 1 > 65_535) {
     throw new PortoError('optionsInvalid', 'size: size must fit in the TCP port range.');
   }

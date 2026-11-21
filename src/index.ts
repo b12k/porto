@@ -21,9 +21,11 @@ async function getAllSlots() {
     const now = Date.now();
     return slots.flatMap((record, index) => {
       if (record === null) return [];
-      const { worktreeId, ...settings } = record;
+      const { worktreeId, ...slotFields } = record;
       const worktreePath = worktreePathsById.get(worktreeId) ?? record.worktreePath;
-      return [{ ...settings, index, isExpired: checkIsExpired(record, now), worktreePath } satisfies ReservationStats];
+      return [
+        { ...slotFields, index, isExpired: checkIsExpired(record, now), worktreePath } satisfies ReservationStats,
+      ];
     });
   });
 }
@@ -35,7 +37,7 @@ async function getSlot(slotIndex?: number) {
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, ({ slots }) => {
     const index = slotIndex ?? slots.findIndex((record) => record?.worktreeId === worktreeId);
-    const record = slots[index];
+    const record = index === -1 ? undefined : slots[index];
     return record ? buildSlot(record, index) : undefined;
   });
 }
@@ -62,7 +64,7 @@ async function releaseSlot(slotIndex?: number) {
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, (registry) => {
     const index = slotIndex ?? registry.slots.findIndex((record) => record?.worktreeId === worktreeId);
-    const record = registry.slots[index];
+    const record = index === -1 ? undefined : registry.slots[index];
     return record ? releaseRecord(registry, index, record) : undefined;
   });
 }
