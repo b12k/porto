@@ -54,28 +54,33 @@ porto cleanup
 
 #### Commands
 
-| Command   | Action                                                                      |
-| --------- | --------------------------------------------------------------------------- |
-| `reserve` | _**(default)**_ Allocate a port slot and print its index or variables.      |
-| `show`    | Show a slot. Use `--all` to show all slots.                                 |
-| `release` | Release a slot. Use `--all` to release all slots when their ports are free. |
-| `cleanup` | Remove expired slots when their ports are free.                             |
+| Command   | Action                                                                 |
+| --------- | ---------------------------------------------------------------------- |
+| `reserve` | _**(default)**_ Allocate a port slot and print its index or variables. |
+| `show`    | Show a slot. Use `--all` to show all slots.                            |
+| `release` | Release a slot. Use `--all` for all slots, `--force` for busy ports.   |
+| `cleanup` | Remove expired slots when their ports are free.                        |
 
-#### `reserve` options
+#### `reserve` settings
 
-| Option                                  | Default           | Action                                        |
-| --------------------------------------- | ----------------- | --------------------------------------------- |
-| `--start <port>`                        | `10000`           | Set the first port of the range.              |
-| `--host <host>`                         | Local addresses   | Check this host for busy ports.               |
-| `--size <count>`                        | `10`              | Set the number of ports per slot.             |
-| `--idle <minutes>`                      | 60 minutes        | Set the idle time limit.                      |
-| `--keep` / `--no-keep`                  | Off for new slots | Keep the slot during idle cleanup.            |
-| `--vars <vars>` / `--no-vars`           | None              | Set or clear the variable list.               |
-| `--env` / `--no-env`                    | Off               | Turn env file output on or off.               |
-| `--env-file <file>`                     | `.env`            | Set the env file path and turn on env output. |
-| `--json-file <file>` / `--no-json-file` | Off               | Set or clear the JSON output file.            |
-| `--json`                                | Off               | Print JSON to stdout. Also works with `show`. |
-| `--silent` / `--no-silent`              | Off               | Hide or show the slot result on stdout.       |
+One setting, three ways to set it. Precedence: CLI flag → config file → saved repository settings (`start` and `size` only) → default.
+
+| Setting        | CLI flag                                | Config key       | Default           | Effect                                                                                   |
+| -------------- | --------------------------------------- | ---------------- | ----------------- | ---------------------------------------------------------------------------------------- |
+| First port     | `--start <port>`                        | `start`          | `10000`           | First port of the range. Shared by all worktrees.                                        |
+| Ports per slot | `--size <count>`                        | `size`           | `10`              | Ports per slot. Shared by all worktrees.                                                 |
+| Host           | `--host <host>`                         | `host`           | Local addresses   | Host to check for busy ports. Remembered with the slot, so repeat runs need no `--host`. |
+| Idle TTL       | `--idle <minutes>`                      | `idleTtlMinutes` | `60`              | Idle limit, minutes. Each `reserve` restarts the countdown.                              |
+| Keep           | `--keep` / `--no-keep`                  | `keep`           | Off for new slots | Keep the slot during idle cleanup. Omit to keep the current value.                       |
+| Variables      | `--vars <vars>` / `--no-vars`           | `vars`           | Unset             | One port per entry. `--no-vars` clears the configured list.                              |
+| Env output     | `--env` / `--no-env`                    | `env`            | `false`           | Write variables and `PORTO_SLOT` to an env file.                                         |
+| Env file       | `--env-file <file>`                     | `envFile`        | `.env`            | An explicit path enables `env` unless you set `env: false`.                              |
+| JSON file      | `--json-file <file>` / `--no-json-file` | `jsonFile`       | `false`           | Save variables or slot details with `PORTO_SLOT`. A path enables it.                     |
+| Silent         | `--silent` / `--no-silent`              | `silent`         | `false`           | Hide the `reserve` result on stdout. Files are still written.                            |
+
+CLI-only flags: `--json` (print JSON to stdout, also works with `show`).
+
+Relative paths in config start at the config directory. Relative paths in flags start at the current directory.
 
 Use `-h` or `--help` for help. Use `-V` or `--version` for the version.
 
@@ -108,7 +113,7 @@ PORTO_SLOT=0
 
 Run the same command again in this worktree to reuse its slot. A second worktree gets its own slot.
 
-`--start` and `--size` are shared by all worktrees. Omit them to reuse the saved settings. Release all slots before changing them.
+To change `--start` or `--size`, release all slots first.
 
 | Worktree | Slot | Ports       |
 | -------- | ---: | ----------- |
@@ -128,8 +133,6 @@ Use a slot number or `--all`. If a port is busy, `release --all` keeps every slo
 ### Config
 
 The CLI loads config for `reserve` and `release`. Create `porto.config.ts` or `porto.config.js` in your worktree. Porto searches from the current directory to the worktree root. If both files are in one directory, Porto uses the TypeScript file.
-
-CLI options override config values. Config values override defaults.
 
 ```ts
 import { defineConfig } from '@b12k/porto';
@@ -154,24 +157,12 @@ export default defineConfig({
 });
 ```
 
-All properties are optional.
+All properties are optional. Every setting from [reserve settings](#reserve-settings) also works as a config key.
 
-| Property         | Default               | Effect                                                                                      |
-| ---------------- | --------------------- | ------------------------------------------------------------------------------------------- |
-| `start`          | `10000`               | Set the first port of the candidate range.                                                  |
-| `size`           | `10`                  | Set the number of ports per slot.                                                           |
-| `host`           | Local addresses       | Check a specific host for busy ports. Porto saves the host for `release` and `cleanup`.     |
-| `idleTtlMinutes` | `60`                  | Set the idle time limit in minutes. A new `reserve` call refreshes the timer.               |
-| `keep`           | `false` for new slots | Keep a slot during idle cleanup. Omit to keep its current setting. Set `false` to clear it. |
-| `env`            | `false`               | Write variables and `PORTO_SLOT` to an env file.                                            |
-| `envFile`        | `.env`                | Set the env file path. An explicit path enables `env` unless you set `env: false`.          |
-| `jsonFile`       | `false`               | Save variables or slot details with `PORTO_SLOT` to a JSON file. Use a path to enable it.   |
-| `silent`         | `false`               | Hide the `reserve` result on stdout. Porto still writes requested files and reports errors. |
-| `vars`           | Unset                 | Assign one port per entry. Use a name for a port number or a function for several values.   |
-| `onReserved`     | Unset                 | Run after Porto saves the slot and writes the requested files.                              |
-| `onReleased`     | Unset                 | Run once per slot freed by `release`.                                                       |
-
-Relative paths in config start at the config directory. Relative paths in flags start at the current directory.
+| Property     | Effect                                                         |
+| ------------ | -------------------------------------------------------------- |
+| `onReserved` | Run after Porto saves the slot and writes the requested files. |
+| `onReleased` | Run once per slot freed by `release`.                          |
 
 A `vars` function receives `(slotIndex, port, entryIndex)`, where `entryIndex` starts at zero. Return an object with string or number values. In the example, `PORT_2` and `HOST_NAME` use the same port.
 
@@ -205,7 +196,7 @@ const { PORT, API_PORT } = slot.vars;
 const DB_PORT = slot.getPort(2); // 10002 if the first slot is free
 ```
 
-TypeScript infers `PORT` and `API_PORT` as `number`. `slot.vars` contains this call's named values and the built-in `PORTO_SLOT`. `slot.ports` lists the ports assigned through `vars` across calls. `getPort()` reads a port by offset.
+TypeScript infers `PORT` and `API_PORT` as `number`. `slot.vars` contains this call's named values and the built-in `PORTO_SLOT`. `slot.ports` lists the ports assigned through `vars`. `getPort()` reads a port by offset.
 
 #### Share a port between variables
 
@@ -223,7 +214,7 @@ const slot = await reserve({
 const { API_PORT, API_URL } = slot.vars;
 ```
 
-`reserve()` accepts `start`, `size`, `host`, `idleTtlMinutes`, `keep`, and `vars`. All six options are optional. Omit `start` and `size` to reuse the saved repository settings. Other options use the defaults in the config table.
+`reserve()` accepts `start`, `size`, `host`, `idleTtlMinutes`, `keep`, and `vars`. All six options are optional. Omit `start` and `size` to reuse the saved repository settings. Other options use the defaults in the [reserve settings](#reserve-settings) table.
 
 Each entry in `vars` uses one port. The example defines three custom variables with two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a slot.
 
