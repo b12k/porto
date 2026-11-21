@@ -1,6 +1,6 @@
 {
   "name": "@b12k/porto",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Port range allocator for git worktrees",
   "keywords": [
     "cli",
