@@ -48,7 +48,7 @@ bun add --dev @b12k/porto
 ```css
 porto [reserve?] [options]
 porto show [slot-number?] [--all?]
-porto release [slot-number?] [--all?]
+porto release [slot-number?] [--all?] [--force?]
 porto cleanup
 ```
 
@@ -121,8 +121,9 @@ Run the same command again in this worktree to reuse its slot. A second worktree
 | ------------------ | -------------------- | ------------------------------------- |
 | `[slot-number]`    | This worktree's slot | Select a slot by index.               |
 | `--all`            | Off                  | Select all slots for this repository. |
+| `--force`          | Off                  | Release slots even if ports are busy. |
 
-Use a slot number or `--all`. If a port is busy, `release --all` keeps every slot.
+Use a slot number or `--all`. If a port is busy, `release --all` keeps every slot, unless `--force` is set.
 
 ### Config
 
@@ -235,7 +236,10 @@ const currentSlot = await getSlot(); // Current slot for this worktree
 const selectedSlot = await getSlot(1); // Slot #1
 const slots = await getAllSlots(); // All slots for this repository
 const releasedSlot = await releaseSlot(); // Release this worktree's slot if its ports are free
+const forceReleasedSlot = await releaseSlot(true); // Force release this worktree's slot
 const releasedSelectedSlot = await releaseSlot(1); // Release slot #1 if its ports are free
+const forceReleasedSelectedSlot = await releaseSlot(1, true); // Force release slot #1 even if its ports are busy
 const releasedSlots = await releaseAllSlots(); // Release all slots if their ports are free
+const forceReleasedSlots = await releaseAllSlots(true); // Force release all slots even if ports are busy
 const expiredSlots = await cleanupSlots(); // Release expired slots if their ports are free
 ```

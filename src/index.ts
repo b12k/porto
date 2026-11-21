@@ -45,7 +45,7 @@ async function getSlot(slotIndex?: number) {
   });
 }
 
-async function releaseAllSlots() {
+async function releaseAllSlots(force = false) {
   const { commonDirectory } = await fetchGitContext();
   return updateRegistry(commonDirectory, async (registry) => {
     const releasedSlots: Array<PortSlot> = [];
@@ -53,24 +53,28 @@ async function releaseAllSlots() {
       const index = Number(key);
       // Keep every release in one transaction; a busy slot leaves the file unchanged.
       // oxlint-disable-next-line no-await-in-loop
-      releasedSlots.push(await releaseRecord(registry, index, record));
+      releasedSlots.push(await releaseRecord(registry, index, record, force));
     }
     return releasedSlots;
   });
 }
 
-async function releaseSlot(slotIndex?: number) {
-  if (slotIndex !== undefined && (!Number.isSafeInteger(slotIndex) || slotIndex < 0)) {
+async function releaseSlot(force?: boolean): Promise<PortSlot | undefined>;
+async function releaseSlot(slotIndex: number | undefined, force?: boolean): Promise<PortSlot | undefined>;
+async function releaseSlot(slotIndex?: boolean | number, force = false) {
+  const selected = typeof slotIndex === 'boolean' ? undefined : slotIndex;
+  const forced = typeof slotIndex === 'boolean' ? slotIndex : force;
+  if (selected !== undefined && (!Number.isSafeInteger(selected) || selected < 0)) {
     throw new PortoError('slotIndexInvalid');
   }
   const { commonDirectory, worktreeId } = await fetchGitContext();
   return updateRegistry(commonDirectory, (registry) => {
-    if (slotIndex !== undefined) {
-      const record = registry.slots[slotIndex];
-      return record ? releaseRecord(registry, slotIndex, record) : undefined;
+    if (selected !== undefined) {
+      const record = registry.slots[selected];
+      return record ? releaseRecord(registry, selected, record, forced) : undefined;
     }
     const found = Object.entries(registry.slots).find(([, record]) => record.worktreeId === worktreeId);
-    return found ? releaseRecord(registry, Number(found[0]), found[1]) : undefined;
+    return found ? releaseRecord(registry, Number(found[0]), found[1], forced) : undefined;
   });
 }
 

@@ -50,9 +50,11 @@ function issuePorts(record: ReservationRecord, index: number, entries: Vars) {
   return buildSlot(record, index);
 }
 
-async function releaseRecord(registry: Registry, index: number, record: ReservationRecord) {
-  const busyPorts = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
-  if (busyPorts.length > 0) throw new BusyPortsError(busyPorts.map((port) => ({ port, slot: index })));
+async function releaseRecord(registry: Registry, index: number, record: ReservationRecord, force = false) {
+  if (!force) {
+    const busyPorts = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
+    if (busyPorts.length > 0) throw new BusyPortsError(busyPorts.map((port) => ({ port, slot: index })));
+  }
   // oxlint-disable-next-line typescript/no-dynamic-delete -- Slot indices are dynamic by design.
   delete registry.slots[index];
   return buildSlot(record, index);

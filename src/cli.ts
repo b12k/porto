@@ -116,13 +116,15 @@ cli
   .argument('[slot-number]', 'Slot index (default: current worktree)', (index) => Number(index.trim() || Number.NaN))
   .description('Release the current worktree slot or select slots by index or --all')
   .option('--all', 'Release all slots if every port is free')
-  .action(async (slotIndex: number | undefined, flags: { all?: boolean }) => {
+  .option('--force', 'Release slots even if their ports are busy')
+  .action(async (slotIndex: number | undefined, flags: { all?: boolean; force?: boolean }) => {
     if (flags.all && slotIndex !== undefined) throw new PortoError('slotSelectionInvalid');
     const { worktreePath } = await fetchGitContext();
     const { onReleased } = await fetchConfig(worktreePath);
+    const force = flags.force ?? false;
     const slots = flags.all
-      ? await releaseAllSlots()
-      : [await releaseSlot(slotIndex)].filter((slot) => slot !== undefined);
+      ? await releaseAllSlots(force)
+      : [await releaseSlot(slotIndex, force)].filter((slot) => slot !== undefined);
     if (!onReleased) return;
     const results = await Promise.allSettled(
       slots.map((slot) => runHook('onReleased', () => onReleased(slot, slot.ports))),
