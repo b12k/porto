@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 
-import { range, union } from 'es-toolkit';
+import { compact, range, union } from 'es-toolkit';
 
 import type { PortoConfig } from './config';
 import type { Registry, ReservationRecord } from './registry';
@@ -12,7 +12,7 @@ import { applyReserveDefaults } from './config';
 import { PortoError } from './error';
 import { fetchGitContext } from './git';
 import { buildSlot, checkHasBusyPort, listBusyPorts } from './ports';
-import { updateRegistry } from './registry';
+import { slotEntries, updateRegistry } from './registry';
 import { parseOptions } from './schemas';
 import { assertVarsFit, mapSlotToVars, parseVarEntries } from './vars';
 
@@ -62,18 +62,17 @@ async function releaseRecord(registry: Registry, index: number, record: Reservat
 }
 
 async function removeExpiredRecords(registry: Registry, now: number) {
-  const checkedSlots = await Promise.all(
-    Object.entries(registry.slots).flatMap(([key, record]) => {
-      const index = Number(key);
-      if (!checkIsExpired(record, now)) return [];
-      return [
-        checkHasBusyPort(record.firstPort, record.lastPort, record.host).then((hasBusyPort) =>
-          hasBusyPort ? undefined : buildSlot(record, index),
+  const expiredSlots = compact(
+    await Promise.all(
+      slotEntries(registry.slots)
+        .filter(({ record }) => checkIsExpired(record, now))
+        .map(async ({ index, record }) =>
+          (await checkHasBusyPort(record.firstPort, record.lastPort, record.host))
+            ? undefined
+            : buildSlot(record, index),
         ),
-      ];
-    }),
+    ),
   );
-  const expiredSlots = checkedSlots.filter((slot) => slot !== undefined);
   for (const { index } of expiredSlots) {
     // oxlint-disable-next-line typescript/no-dynamic-delete -- Slot indices are dynamic by design.
     delete registry.slots[index];
@@ -97,9 +96,9 @@ function commitReservation(
     registry.startPort = start;
     registry.portsPerSlot = size;
     const now = Date.now();
-    const existingEntry = Object.entries(registry.slots).find(([, record]) => record.worktreeId === worktreeId);
-    const existingIndex = existingEntry === undefined ? -1 : Number(existingEntry[0]);
-    const existingRecord = existingEntry?.[1];
+    const existingEntry = slotEntries(registry.slots).find(({ record }) => record.worktreeId === worktreeId);
+    const existingIndex = existingEntry === undefined ? -1 : existingEntry.index;
+    const existingRecord = existingEntry?.record;
     const lastUsedAt = new Date(now).toISOString();
     const isKept = keep ?? existingRecord?.keep ?? false;
     const settings = {

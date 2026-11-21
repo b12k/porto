@@ -3,14 +3,13 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
 
-import type { PortSlot, ReservationStats } from './index';
+import type { ReservationStats } from './index';
+import type { PortSlot } from './ports';
+import type { SlotVars } from './vars';
 
 import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
 import { getRegistryPath } from './registry';
-
-type Environment = SlotVars;
-type SlotVars = Record<string, number | string>;
 
 // Match unrelated names too so their quoted values are skipped as a unit.
 const ENV_ASSIGNMENT_PATTERN =
@@ -170,9 +169,8 @@ async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDir
   }
 }
 
-async function writeReserveJsonFile(filePath: string, slot: PortSlot, vars: SlotVars | undefined) {
-  const variables = vars ?? { firstPort: slot.firstPort, index: slot.index, lastPort: slot.lastPort, ...slot.vars };
-  await writeFileAtomically(filePath, `${JSON.stringify(variables)}\n`);
+async function writeReserveJsonFile(filePath: string, vars: SlotVars) {
+  await writeFileAtomically(filePath, `${JSON.stringify(vars)}\n`);
 }
 
 export {
@@ -184,4 +182,3 @@ export {
   updateEnvironmentFile,
   writeReserveJsonFile,
 };
-export type { Environment, SlotVars };

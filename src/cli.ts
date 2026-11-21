@@ -1,14 +1,24 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { pickBy } from 'es-toolkit';
+import { compact, pickBy } from 'es-toolkit';
 import updateNotifier from 'update-notifier';
 
 import type { PortoConfig } from './config';
+import type { PortSlot } from './index';
 
 import { fetchConfig, name, parseConfig, resolveOutputSettings, version } from './config';
 import { fetchGitContext } from './git';
-import { BusyPortsError, cleanupSlots, getAllSlots, getSlot, PortoError, releaseAllSlots, releaseSlot } from './index';
+import {
+  BusyPortsError,
+  cleanupSlots,
+  destroy,
+  getAllSlots,
+  getSlot,
+  PortoError,
+  releaseAllSlots,
+  releaseSlot,
+} from './index';
 import { logError } from './log';
 import {
   fetchExportPaths,
@@ -46,6 +56,15 @@ async function runHook(hookName: string, hook: () => Promise<void> | void) {
   }
 }
 
+async function runReleaseHooks(onReleased: PortoConfig['onReleased'], slots: Array<PortSlot>) {
+  if (!onReleased) return;
+  const results = await Promise.allSettled(
+    slots.map((slot) => runHook('onReleased', () => onReleased(slot, slot.ports))),
+  );
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure) throw failure.reason;
+}
+
 function writeOutput(contents: string) {
   process.stdout.write(`${contents}\n`);
 }
@@ -57,12 +76,16 @@ async function handleReserve(flags: ReserveFlags, command: Command) {
   const slot = await commitReservation(git, { ...settings, vars: resolvedVars });
   const vars = resolvedVars === undefined ? undefined : slot.vars;
   const output = slot.silent ? undefined : formatReserveOutput(slot, vars, json);
-  if (jsonPath) await writeReserveJsonFile(jsonPath, slot, vars);
+  if (jsonPath) await writeReserveJsonFile(jsonPath, slot.vars);
   if (envPath) {
     await updateEnvironmentFile(envPath, slot.vars, git.commonDirectory);
   }
   if (onReserved) await runHook('onReserved', () => onReserved(slot, slot.ports));
   if (output !== undefined) writeOutput(output);
+}
+
+function parseSlotNumber(index: string) {
+  return Number(index.trim() || Number.NaN);
 }
 
 const cli = new Command('porto');
@@ -95,7 +118,7 @@ cli
 
 cli
   .command('show')
-  .argument('[slot-number]', 'Slot index (default: current worktree)', (index) => Number(index.trim() || Number.NaN))
+  .argument('[slot-number]', 'Slot index (default: current worktree)', parseSlotNumber)
   .description('Show the current worktree slot or select slots by index or --all')
   .option('--all', 'Show all slots in this repository')
   .option('--json', 'Print JSON to stdout')
@@ -113,7 +136,7 @@ cli
 
 cli
   .command('release')
-  .argument('[slot-number]', 'Slot index (default: current worktree)', (index) => Number(index.trim() || Number.NaN))
+  .argument('[slot-number]', 'Slot index (default: current worktree)', parseSlotNumber)
   .description('Release the current worktree slot or select slots by index or --all')
   .option('--all', 'Release all slots if every port is free')
   .option('--force', 'Release slots even if their ports are busy')
@@ -122,15 +145,24 @@ cli
     const { worktreePath } = await fetchGitContext();
     const { onReleased } = await fetchConfig(worktreePath);
     const force = flags.force ?? false;
-    const slots = flags.all
-      ? await releaseAllSlots(force)
-      : [await releaseSlot(slotIndex, force)].filter((slot) => slot !== undefined);
-    if (!onReleased) return;
-    const results = await Promise.allSettled(
-      slots.map((slot) => runHook('onReleased', () => onReleased(slot, slot.ports))),
-    );
-    const failure = results.find((result) => result.status === 'rejected');
-    if (failure) throw failure.reason;
+    let slots: Array<PortSlot>;
+    try {
+      slots = flags.all ? await releaseAllSlots(force) : compact([await releaseSlot(slotIndex, force)]);
+    } catch (error) {
+      if (!(error instanceof BusyPortsError) || !flags.all) throw error;
+      // A partial release already saved the free slots; their hooks still run.
+      slots = error.releasedSlots;
+      await runReleaseHooks(onReleased, slots);
+      throw error;
+    }
+    await runReleaseHooks(onReleased, slots);
+  });
+cli
+  .command('destroy')
+  .description('Delete the reservation file for this repository')
+  .option('--force', 'Delete even if ports are busy')
+  .action(async (flags: { force?: boolean }) => {
+    await destroy(flags.force ?? false);
   });
 cli
   .command('cleanup')

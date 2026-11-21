@@ -49,6 +49,7 @@ bun add --dev @b12k/porto
 porto [reserve?] [options]
 porto show [slot-number?] [--all?]
 porto release [slot-number?] [--all?] [--force?]
+porto destroy [--force?]
 porto cleanup
 ```
 
@@ -59,6 +60,7 @@ porto cleanup
 | `reserve` | _**(default)**_ Allocate a port slot and print its index or variables. |
 | `show`    | Show a slot. Use `--all` to show all slots.                            |
 | `release` | Release a slot. Use `--all` for all slots, `--force` for busy ports.   |
+| `destroy` | Delete the reservation file entirely. Use `--force` for busy ports.    |
 | `cleanup` | Remove expired slots when their ports are free.                        |
 
 #### `reserve` settings
@@ -75,7 +77,7 @@ One setting, three ways to set it. Precedence: CLI flag → config file → save
 | Variables      | `--vars <vars>` / `--no-vars`           | `vars`           | Unset             | One port per entry. `--no-vars` clears the configured list.                              |
 | Env output     | `--env` / `--no-env`                    | `env`            | `false`           | Write variables and `SLOT` to an env file.                                               |
 | Env file       | `--env-file <file>`                     | `envFile`        | `.env`            | An explicit path enables `env` unless you set `env: false`.                              |
-| JSON file      | `--json-file <file>` / `--no-json-file` | `jsonFile`       | `false`           | Save variables or slot details with `SLOT`. A path enables it.                           |
+| JSON file      | `--json-file <file>` / `--no-json-file` | `jsonFile`       | `false`           | Save the mapped variables as JSON. `SLOT` alone when no `vars` are given.                |
 | Silent         | `--silent` / `--no-silent`              | `silent`         | `false`           | Hide the `reserve` result on stdout. Files are still written.                            |
 
 CLI-only flags: `--json` (print JSON to stdout, also works with `show`).
@@ -127,7 +129,7 @@ To change `--start` or `--size`, release all slots first.
 | `--all`            | Off                  | Select all slots for this repository. |
 | `--force`          | Off                  | Release slots even if ports are busy. |
 
-Use a slot number or `--all`. If a port is busy, `release --all` keeps every slot, unless `--force` is set.
+Use a slot number or `--all`. If a port is busy, `release --all` frees the other slots, keeps the busy ones, and reports an error unless `--force` is set.
 
 ### Config
 
@@ -215,12 +217,12 @@ const { API_PORT, API_URL } = slot.vars;
 
 `reserve()` accepts `start`, `size`, `host`, `idleTtlMinutes`, `keep`, and `vars`. All six options are optional. Omit `start` and `size` to reuse the saved repository settings. Other options use the defaults in the [reserve settings](#reserve-settings) table.
 
-Each entry in `vars` uses one port. The example defines three custom variables with two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a slot.
+Each entry in `vars` uses one port. The example maps four variables with two entries. With `size: 2`, three separate entries throw `PortoError` with code `mappingInvalid` before Porto saves a slot.
 
 #### Read and release slots
 
 ```js
-import { cleanupSlots, getAllSlots, getSlot, releaseAllSlots, releaseSlot } from '@b12k/porto';
+import { cleanupSlots, destroy, getAllSlots, getSlot, releaseAllSlots, releaseSlot } from '@b12k/porto';
 
 const currentSlot = await getSlot(); // Current slot for this worktree
 const selectedSlot = await getSlot(1); // Slot #1
@@ -232,4 +234,6 @@ const forceReleasedSelectedSlot = await releaseSlot(1, true); // Force release s
 const releasedSlots = await releaseAllSlots(); // Release all slots if their ports are free
 const forceReleasedSlots = await releaseAllSlots(true); // Force release all slots even if ports are busy
 const expiredSlots = await cleanupSlots(); // Release expired slots if their ports are free
+await destroy(); // Delete the reservation file if every port is free
+await destroy(true); // Delete the reservation file even if ports are busy
 ```

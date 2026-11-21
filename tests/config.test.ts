@@ -167,13 +167,13 @@ it('resolves config paths from the config directory and CLI paths from cwd', asy
   const nestedPath = path.join(repositoryPath, 'nested');
   await mkdir(nestedPath);
   await writeConfig(`export default { start: ${start}, size: 2, envFile: 'config.env', jsonFile: 'config.json' };`);
-  const configured = await runCliOutput(['reserve', '--json'], nestedPath);
+  await runCliOutput(['reserve', '--json'], nestedPath);
   const configJson = await readFile(path.join(repositoryPath, 'config.json'), 'utf8');
-  expect(JSON.parse(configJson)).toEqual({ ...JSON.parse(configured), SLOT: 0 });
+  expect(JSON.parse(configJson)).toEqual({ SLOT: 0 });
   expect(await readFile(path.join(repositoryPath, 'config.env'), 'utf8')).toBe('SLOT=0\n');
-  const explicit = await runCliOutput(['reserve', '--json-file=cli.json', '--env-file=cli.env', '--json'], nestedPath);
+  await runCliOutput(['reserve', '--json-file=cli.json', '--env-file=cli.env', '--json'], nestedPath);
   const cliJson = await readFile(path.join(nestedPath, 'cli.json'), 'utf8');
-  expect(JSON.parse(cliJson)).toEqual({ ...JSON.parse(explicit), SLOT: 0 });
+  expect(JSON.parse(cliJson)).toEqual({ SLOT: 0 });
   expect(await readFile(path.join(nestedPath, 'cli.env'), 'utf8')).toBe('SLOT=0\n');
 });
 
@@ -185,7 +185,7 @@ it('writes configured files in silent mode and lets --no-silent restore stdout',
   );
   expect(await runCliOutput([], nestedPath)).toBe('');
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
-  expect(JSON.parse(jsonOutput)).toEqual({ firstPort: start, index: 0, lastPort: start + 1, SLOT: 0 });
+  expect(JSON.parse(jsonOutput)).toEqual({ SLOT: 0 });
   expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('SLOT=0\n');
   expect(await readdir(nestedPath)).toEqual([]);
   expect(await runCliOutput(['reserve', '--no-silent'], nestedPath)).toBe('0\n');
@@ -198,7 +198,7 @@ it('creates exports only when requested and uses the default env filename and SL
   const stdout = await runCliOutput([...args, '--json-file=ports.json', '--env', '--json', '--silent']);
   expect(stdout).toBe('');
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
-  expect(JSON.parse(jsonOutput)).toEqual({ firstPort: start, index: 0, lastPort: start + 1, SLOT: 0 });
+  expect(JSON.parse(jsonOutput)).toEqual({ SLOT: 0 });
   expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe('SLOT=0\n');
 });
 
