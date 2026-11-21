@@ -6,7 +6,7 @@ import updateNotifier from 'update-notifier';
 
 import type { PortoConfig } from './config';
 
-import { fetchConfig, name, parseConfig, version } from './config';
+import { fetchConfig, name, parseConfig, resolveOutputSettings, version } from './config';
 import { fetchGitContext } from './git';
 import { BusyPortsError, cleanupSlots, getAllSlots, getSlot, PortoError, releaseAllSlots, releaseSlot } from './index';
 import { logError } from './log';
@@ -53,13 +53,10 @@ function writeOutput(contents: string) {
 async function handleReserve(flags: ReserveFlags, command: Command) {
   const git = await fetchGitContext();
   const { json, onReserved, vars: resolvedVars, ...settings } = await fetchSettings(flags, command, git.worktreePath);
-  const prepared = await commitReservation(git, { ...settings, vars: resolvedVars }, async (slot) => {
-    const paths = await fetchExportPaths(slot, git.commonDirectory);
-    const vars = resolvedVars === undefined ? undefined : slot.vars;
-    const output = slot.silent ? undefined : formatReserveOutput(slot, vars, json);
-    return { ...paths, output, slot, vars };
-  });
-  const { envPath, jsonPath, output, slot, vars } = prepared;
+  const { envPath, jsonPath } = await fetchExportPaths(resolveOutputSettings(settings), git.commonDirectory);
+  const slot = await commitReservation(git, { ...settings, vars: resolvedVars });
+  const vars = resolvedVars === undefined ? undefined : slot.vars;
+  const output = slot.silent ? undefined : formatReserveOutput(slot, vars, json);
   if (jsonPath) await writeReserveJsonFile(jsonPath, slot, vars);
   if (envPath) {
     await updateEnvironmentFile(envPath, slot.vars, git.commonDirectory);

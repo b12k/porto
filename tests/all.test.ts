@@ -101,7 +101,7 @@ it('releases occupied array positions without treating free slots as reservation
   await runCli(['release', '0']);
   expect(await runApi('console.log(JSON.stringify(await releaseAllSlots()));')).toMatchObject([{ index: 1 }]);
   const contents = await readFile(path.join(directoryPath, '.git', 'porto-registry.json'), 'utf8');
-  expect(JSON.parse(contents)).toEqual({ portsPerSlot: 2, slots: [], startPort: start });
+  expect(JSON.parse(contents)).toEqual({ portsPerSlot: 2, slots: {}, startPort: start });
 });
 
 it('keeps all slots on a busy-port failure and runs hooks once per slot after a successful release', async () => {

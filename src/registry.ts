@@ -4,19 +4,17 @@ import lockfile from 'proper-lockfile';
 
 import type { Registry } from './schemas';
 
+import { DEFAULT_CONFIG } from './config';
 import { PortoError } from './error';
 import { checkIsFileMissing, writeFileAtomically } from './files';
 import { REGISTRY_SCHEMA } from './schemas';
-
-const DEFAULT_START_PORT = 10_000;
-const DEFAULT_PORTS_PER_SLOT = 10;
 
 async function fetchRegistry(filePath: string): Promise<Registry> {
   try {
     return REGISTRY_SCHEMA.parse(JSON.parse(await readFile(filePath, 'utf8')));
   } catch (error) {
     if (checkIsFileMissing(error)) {
-      return { portsPerSlot: DEFAULT_PORTS_PER_SLOT, slots: [], startPort: DEFAULT_START_PORT };
+      return { portsPerSlot: DEFAULT_CONFIG.size, slots: {}, startPort: DEFAULT_CONFIG.start };
     }
     throw new PortoError('registryInvalid', filePath, { cause: error });
   }
@@ -27,7 +25,6 @@ function getRegistryPath(commonDirectory: string) {
 }
 
 async function writeRegistry(filePath: string, registry: Registry, previousContents: string) {
-  while (registry.slots.at(-1) === null) registry.slots.pop();
   const contents = JSON.stringify(registry);
   if (contents !== previousContents) {
     await writeFileAtomically(filePath, `${contents}\n`);

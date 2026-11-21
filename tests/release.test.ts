@@ -1,4 +1,3 @@
-// oxlint-disable unicorn/no-null -- Registry assertions use JSON null for empty slots.
 import { afterEach, beforeEach, expect, it } from '@rstest/core';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
@@ -128,7 +127,7 @@ it('shares one range across worktrees, preserves indices and reuses free slots',
   const contents = await readFile(registryPath, 'utf8');
   expect(JSON.parse(contents)).toMatchObject({
     portsPerSlot: 1,
-    slots: [null, { vars: { PORTO_SLOT: 1 } }],
+    slots: { 1: { vars: { PORTO_SLOT: 1 } } },
     startPort: start,
   });
   await runCli(['reserve']);
@@ -136,7 +135,7 @@ it('shares one range across worktrees, preserves indices and reuses free slots',
   await runCli(['release']);
   await runCli(['release', '1']);
   const emptyRegistry = await readFile(registryPath, 'utf8');
-  expect(JSON.parse(emptyRegistry)).toEqual({ portsPerSlot: 1, slots: [], startPort: start });
+  expect(JSON.parse(emptyRegistry)).toEqual({ portsPerSlot: 1, slots: {}, startPort: start });
 });
 
 it('releases the current slot by default and another checkout slot by index with busy-port checks', async () => {

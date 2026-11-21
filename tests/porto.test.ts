@@ -214,7 +214,7 @@ it('supports a worktree of a bare repository and rejects the bare directory itse
   await runGit(['worktree', 'add', '--detach', worktreePath], barePath);
   expect(await runCliOutput(reserveArgs(), worktreePath)).toBe('0\n');
   const records: unknown = JSON.parse(await readFile(path.join(barePath, 'porto-registry.json'), 'utf8'));
-  expect(records).toHaveProperty('slots.length', 1);
+  expect(records).toHaveProperty('slots.0');
   await expect(runCli(reserveArgs(), barePath)).rejects.toThrow('working tree');
 });
 

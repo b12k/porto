@@ -20,8 +20,8 @@ let start: number;
 async function readRecord() {
   const registryPath = path.join(directoryPath, '.git', 'porto-registry.json');
   const { slots } = REGISTRY_SCHEMA.parse(JSON.parse(await readFile(registryPath, 'utf8')));
-  const record = slots.find((slot) => slot !== null);
-  if (!record) throw new Error('Missing saved reservation.');
+  const [record] = Object.values(slots);
+  if (record === undefined) throw new Error('Missing saved reservation.');
   return record;
 }
 
@@ -119,7 +119,7 @@ it('stores range settings once and cleans up using the saved slot expiry', async
     const registryContents = await readFile(registryPath, 'utf8');
     const registry = REGISTRY_SCHEMA.parse(JSON.parse(registryContents));
     expect(registry).toMatchObject({ portsPerSlot: 3, startPort: start });
-    expect(registry.slots[0]).toBeNull();
+    expect(registry.slots[0]).toBeUndefined();
     expect(record).not.toHaveProperty('index');
     expect(record).not.toHaveProperty('rangeStart');
     expect(record).not.toHaveProperty('size');
