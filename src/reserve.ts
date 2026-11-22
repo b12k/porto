@@ -112,15 +112,16 @@ function snapshotSlotForKeep(slot: Parameters<KeepPredicate>[0]): KeepSlot {
   Object.freeze(snapshot.vars);
   return Object.freeze(snapshot) as KeepSlot;
 }
-function commitReservation(
+async function commitReservation(
   { commonDirectory, gitDirectory, worktreeId, worktreePath }: Awaited<ReturnType<typeof fetchGitContext>>,
   { vars: entries, ...options }: Omit<PortoConfig, 'onReleased' | 'onReserved'>,
-  validation?: { envFormat?: boolean },
-  onSaved?: (vars: SlotVars) => Promise<void> | void,
+  output?: { envFormat: boolean; prepareExports: () => Promise<(vars: SlotVars) => Promise<void>> },
 ) {
-  return updateRegistry(
+  const { slot: reservedSlot } = await updateRegistry(
     commonDirectory,
     async (registry) => {
+      // Another reservation may change the export targets while this one waits for the registry lock.
+      const writeExports = await output?.prepareExports();
       const vars = entries ?? [];
       const { env, envPath, host, idleTtlMinutes, jsonPath, keep, silent, size, start } = applyReserveDefaults(
         options,
@@ -169,24 +170,25 @@ function commitReservation(
           });
       // A failed factory must leave the registry untouched.
       const slot = issuePorts(record, index, vars);
-      if (validation?.envFormat) {
+      if (output?.envFormat) {
         // Fail before the registry is written: env output must be able to render every value.
         formatEnvironment(record.vars);
       }
       // Keep is resolved after variables are mapped so predicates can use slot.vars.
       record.keep = await resolveKeep(keep, snapshotSlotForKeep(slot), () => previousKeep);
       // The returned slot must carry the resolved keep value instead of the pre-resolution one.
-      return buildSlot(record, index);
+      return { slot: buildSlot(record, index), writeExports };
     },
     {
-      afterSave: async (_registry, slot) => {
+      afterSave: async (_registry, { slot, writeExports }) => {
         // Registry is already saved; exports run under the same lock so a
         // Concurrent reserve cannot interleave registry and file contents.
         // If an export fails the reservation stays and the command reports it.
-        if (onSaved) await onSaved(slot.vars);
+        await writeExports?.(slot.vars);
       },
     },
   );
+  return reservedSlot;
 }
 async function reserve<const Entries extends Vars>(
   options: ReserveOptions & { vars: Entries },
