@@ -94,7 +94,10 @@ it('loads a TypeScript defineConfig file and assigns one port per variable entry
 it('runs reserve by default with and without options', async () => {
   await writeConfig(`export default { start: ${start}, size: 2, vars: ['API_PORT'] };`);
   expect(await runCliOutput([])).toBe(`API_PORT=${start}\n`);
-  expect(await runCliOutput(['show'])).toBe('0\n');
+  const showOutput = await runCliOutput(['show']);
+  expect(showOutput).toMatch(/SLOT.*PORTS.*WORKTREE/su);
+  expect(showOutput).toMatch(/VARS.*BUSY PORTS/su);
+  expect(showOutput).toContain(`API_PORT=${start}`);
   expect(await runCliOutput(['--env', '--json'])).toBe(await runCliOutput(['reserve', '--json']));
   expect(await readFile(path.join(repositoryPath, '.env'), 'utf8')).toBe(`API_PORT=${start}\n`);
 });
@@ -160,7 +163,9 @@ it('disables configured vars, env and JSON files, and keep with no-* flags', asy
   expect(await runCliOutput(['reserve', '--no-vars', '--no-env', '--no-json-file', '--no-keep'])).toBe('0\n');
   expect(await readdir(repositoryPath)).toEqual(['.git', 'porto.config.ts']);
   expect(await runCliJson(['show', '--all', '--json'])).toMatchObject([{ keep: false }]);
-  expect(await runCliOutput(['show'])).toBe('0\n');
+  const showOutput = await runCliOutput(['show']);
+  expect(showOutput).toMatch(/SLOT.*PORTS.*WORKTREE/su);
+  expect(showOutput).toMatch(/VARS.*BUSY PORTS/su);
 });
 
 it('resolves config paths from the config directory and CLI paths from cwd', async () => {

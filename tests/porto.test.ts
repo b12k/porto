@@ -125,7 +125,9 @@ it('keeps a reservation with a moved worktree and shows the new path', async () 
   expect(await runCliOutput(reserveArgs('--keep'), worktreePath)).toBe('0\n');
   await runGit(['worktree', 'move', worktreePath, movedPath]);
 
-  expect(await runCliOutput(['show'], movedPath)).toBe('0\n');
+  const movedShow = await runCliOutput(['show'], movedPath);
+  expect(movedShow).toMatch(/SLOT.*VARS.*BUSY PORTS/su);
+  expect(movedShow).toMatch(/│\s*0\s*│/u);
   expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toMatchObject([
     { index: 0, keep: true, worktreePath: await realpath(movedPath) },
   ]);
@@ -137,7 +139,8 @@ it('keeps a reservation with a moved worktree and shows the new path', async () 
 it('persists a refreshed reservation even with a submillisecond idle TTL', async () => {
   await runCli(reserveArgs('--idle', '0.000000001'));
   await runCli(reserveArgs('--idle', '0.000000001'));
-  expect(await runCliOutput(['show'])).toBe('0\n');
+  const showOutput = await runCliOutput(['show']);
+  expect(showOutput).toMatch(/SLOT.*VARS.*BUSY PORTS/su);
 });
 
 it('skips busy and reserved slots within the repository range', async () => {
@@ -153,14 +156,15 @@ it('reads from subdirectories without refreshing timestamps or cleaning expired 
   await expireRecords();
   const nestedPath = path.join(repositoryPath, 'nested');
   await mkdir(nestedPath);
-  expect(await runCliOutput(['show'], nestedPath)).toBe('0\n');
+  const nestedShow = await runCliOutput(['show'], nestedPath);
+  expect(nestedShow).toMatch(/SLOT.*VARS.*BUSY PORTS/su);
   const worktreePath = await realpath(repositoryPath);
   expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toMatchObject([
     { isExpired: true, lastUsedAt: '2000-01-01T00:00:00.000Z', worktreePath },
   ]);
   const table = await runCliOutput(['show', '--all']);
-  expect(table).toMatch(/WORKTREE +PATH +LAST USED/u);
-  expect(table).toMatch(new RegExp(`repository  ${RegExp.escape(worktreePath)}  .+ years ago`, 'u'));
+  expect(table).toMatch(/WORKTREE.*VARS.*BUSY PORTS/su);
+  expect(table).toMatch(new RegExp(`repository.*${RegExp.escape(worktreePath)}.*years ago`, 'su'));
 });
 
 it('cleans only idle slots with every port free', async () => {
@@ -192,7 +196,8 @@ it('recovers a stale process lock', async () => {
   const staleAt = new Date(Date.now() - 20_000);
   await mkdir(lockPath);
   await utimes(lockPath, staleAt, staleAt);
-  expect(await runCliOutput(['show'])).toBe('0\n');
+  const showOutput = await runCliOutput(['show']);
+  expect(showOutput).toMatch(/SLOT.*VARS.*BUSY PORTS/su);
 });
 
 it('keeps the current slot when a busy port prevents release', async () => {

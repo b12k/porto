@@ -71,14 +71,21 @@ it('shows the current slot, a selected slot or all slots as JSON and a table', a
   await reserveSlots();
   const current = await runCli(['show']);
   const other = await runCli(['show'], otherPath);
-  expect(current.stdout).toBe('0\n');
-  expect(other.stdout).toBe('1\n');
+  for (const output of [current.stdout, other.stdout]) {
+    expect(output).toMatch(/SLOT.*PORTS.*WORKTREE/su);
+    expect(output).toMatch(/VARS.*BUSY PORTS/su);
+  }
+  expect(current.stdout).toContain(`API_PORT=${start}`);
+  expect(other.stdout).toContain(`API_PORT=${start + 2}`);
+  expect(current.stdout).toMatch(/│\s*0\s*│/u);
+  expect(other.stdout).toMatch(/│\s*1\s*│/u);
   const selected = await runCli(['show', '0', '--json'], otherPath);
   expect(JSON.parse(selected.stdout)).toMatchObject({ index: 0 });
   const all = await runCli(['show', '--all', '--json']);
   expect(JSON.parse(all.stdout)).toMatchObject([{ index: 0 }, { index: 1 }]);
   const table = await runCli(['show', '--all']);
-  expect(table.stdout).toMatch(/SLOT +PORTS +WORKTREE/u);
+  expect(table.stdout).toMatch(/SLOT.*PORTS.*WORKTREE/su);
+  expect(table.stdout).toMatch(/VARS.*BUSY PORTS/su);
   expect(table.stdout).toContain(otherPath);
 });
 

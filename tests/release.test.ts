@@ -106,7 +106,10 @@ it('reads the checkout slot or a slot by index from any worktree without changin
   expect(await runApi('console.log(JSON.stringify(await getSlot(0)));', worktreePath)).toMatchObject({ index: 0 });
   expect(await runApi('console.log(JSON.stringify({ missing: await getSlot(99) }));')).toEqual({});
   expect(await runApi('console.log(JSON.stringify(await getAllSlots()));')).toMatchObject([{ index: 0 }, { index: 1 }]);
-  expect(await runCliOutput(['show', '1'])).toBe('1\n');
+  const showOneOutput = await runCliOutput(['show', '1']);
+  expect(showOneOutput).toMatch(/SLOT.*PORTS.*WORKTREE/su);
+  expect(showOneOutput).toMatch(/VARS.*BUSY PORTS/su);
+  expect(showOneOutput).toMatch(/│\s*1\s*│/u);
   expect(JSON.parse(await runCliOutput(['show', '0', '--json'], worktreePath))).toMatchObject({ index: 0 });
   await expect(runCli(['show', '99'])).rejects.toMatchObject({ code: 1, stdout: '' });
   expect(await readFile(registryPath, 'utf8')).toBe(registry);
@@ -117,8 +120,14 @@ it('shares one range across worktrees, preserves indices and reuses free slots',
   await reserveSlot(1);
   await expect(reserveSlot(1, worktreePath, start + 5)).rejects.toThrow('Port range settings differ');
   await runCli(['reserve'], worktreePath);
-  expect(await runCliOutput(['show', '1'])).toBe('1\n');
-  expect(await runCliOutput(['show'])).toBe('0\n');
+  const showOne = await runCliOutput(['show', '1']);
+  expect(showOne).toMatch(/SLOT.*PORTS.*WORKTREE/su);
+  expect(showOne).toMatch(/VARS.*BUSY PORTS/su);
+  expect(showOne).toMatch(/│\s*1\s*│/u);
+  const showCurrent = await runCliOutput(['show']);
+  expect(showCurrent).toMatch(/SLOT.*PORTS.*WORKTREE/su);
+  expect(showCurrent).toMatch(/VARS.*BUSY PORTS/su);
+  expect(showCurrent).toMatch(/│\s*0\s*│/u);
   await runCli(['release', '0']);
   expect(JSON.parse(await runCliOutput(['show', '--all', '--json']))).toMatchObject([
     { firstPort: start + 1, index: 1 },
@@ -131,7 +140,10 @@ it('shares one range across worktrees, preserves indices and reuses free slots',
     startPort: start,
   });
   await runCli(['reserve']);
-  expect(await runCliOutput(['show'])).toBe('0\n');
+  const reusedOutput = await runCliOutput(['show']);
+  expect(reusedOutput).toMatch(/SLOT.*PORTS.*WORKTREE/su);
+  expect(reusedOutput).toMatch(/VARS.*BUSY PORTS/su);
+  expect(reusedOutput).toMatch(/│\s*0\s*│/u);
   await runCli(['release']);
   await runCli(['release', '1']);
   const emptyRegistry = await readFile(registryPath, 'utf8');

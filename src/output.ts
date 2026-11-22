@@ -1,19 +1,33 @@
+import Table from 'cli-table3';
 import { formatDistance } from 'date-fns/formatDistance';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
 
-import type { ReservationStats } from './index';
-import type { PortSlot } from './ports';
 import type { SlotVars } from './vars';
 
 import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
+import { listBusyPorts } from './ports';
 import { getRegistryPath } from './registry';
 
 // Match unrelated names too so their quoted values are skipped as a unit.
 const ENV_ASSIGNMENT_PATTERN =
   /^(?<prefix>\uFEFF?[ \t]*(?:export[ \t]+)?)(?<name>[^#=\s][^=\r\n]*?)(?<separator>[ \t]*=[ \t]*)(?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|`[^`]*`|[^\r\n#]*?)(?<suffix>[ \t]*(?:#[^\r\n]*)?)(?=\r?$)/gmu;
+
+interface StatsInput {
+  expiresAt: string;
+  firstPort: number;
+  host?: string | undefined;
+  idleTtlMinutes: number;
+  index: number;
+  isExpired?: boolean;
+  keep: boolean;
+  lastPort: number;
+  lastUsedAt: string;
+  vars: SlotVars;
+  worktreePath: string;
+}
 
 async function fetchFileIdentity(filePath: string) {
   try {
@@ -59,6 +73,10 @@ async function assertExportPaths(exportPaths: Array<string>, registryPath: strin
   }
 }
 
+function clampWidth(termWidth: number, reserved: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, termWidth - reserved));
+}
+
 async function fetchEnvironmentContents(filePath: string) {
   try {
     return await readFile(filePath, 'utf8');
@@ -86,6 +104,11 @@ async function fetchExportPaths(
   return { envPath, jsonPath };
 }
 
+function formatBusyCell(ports: Array<number>) {
+  if (ports.length === 0) return '-';
+  return ports.join(', ');
+}
+
 function formatEnvironmentValue(value: number | string) {
   const text = String(value);
   if (/^[A-Za-z0-9_./:@%+,-]*$/u.test(text)) return text;
@@ -100,7 +123,11 @@ function formatEnvironment(vars: SlotVars) {
     .join('\n');
 }
 
-function formatReserveOutput(slot: PortSlot, vars: SlotVars | undefined, isJson: boolean) {
+function formatReserveOutput(
+  slot: Pick<StatsInput, 'firstPort' | 'index' | 'lastPort'>,
+  vars: SlotVars | undefined,
+  isJson: boolean,
+) {
   if (isJson) {
     return JSON.stringify(vars ?? { firstPort: slot.firstPort, index: slot.index, lastPort: slot.lastPort });
   }
@@ -108,32 +135,27 @@ function formatReserveOutput(slot: PortSlot, vars: SlotVars | undefined, isJson:
 }
 
 function formatTable(headers: Array<string>, rows: Array<Array<string>>) {
-  const widths = headers.map((header, index) => Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)));
-  return [headers, ...rows]
-    .map((row) =>
-      row
-        .map((cell, index) => cell.padEnd(widths[index] ?? 0))
-        .join('  ')
-        .trimEnd(),
-    )
-    .join('\n');
+  const table = new Table({ head: headers, style: { border: [], head: [] } });
+  for (const row of rows) table.push(row);
+  return table.toString();
 }
 
-function formatStatsTable(slots: Array<ReservationStats>) {
-  const now = Date.now();
-  return formatTable(
-    ['SLOT', 'PORTS', 'WORKTREE', 'PATH', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED'],
-    slots.map((slot) => [
-      String(slot.index),
-      `${slot.firstPort}-${slot.lastPort}`,
-      path.basename(slot.worktreePath) || slot.worktreePath,
-      slot.worktreePath,
-      formatDistance(slot.lastUsedAt, now, { addSuffix: true }),
-      String(slot.idleTtlMinutes),
-      slot.keep ? 'yes' : 'no',
-      slot.isExpired ? 'yes' : 'no',
-    ]),
-  );
+function formatVarsCell(vars: SlotVars) {
+  const entries = Object.entries(vars);
+  if (entries.length === 0) return '-';
+  return entries.map(([name, value]) => `${name}=${value}`).join(', ');
+}
+
+function getTerminalWidth(): number | undefined {
+  if (process.stdout.isTTY) {
+    const width = process.stdout.columns;
+    if (typeof width === 'number' && Number.isFinite(width) && width > 0) return width;
+  }
+  return undefined;
+}
+
+function isSlotExpired(slot: Pick<StatsInput, 'expiresAt' | 'keep'>, now: number) {
+  return !slot.keep && now > Date.parse(slot.expiresAt);
 }
 
 async function saveEnvironmentFile(filePath: string, vars: SlotVars) {
@@ -155,6 +177,15 @@ async function saveEnvironmentFile(filePath: string, vars: SlotVars) {
   await writeFileAtomically(filePath, `${updated}${appended ? `${separator}${appended}${lineEnding}` : ''}`);
 }
 
+function truncateMiddle(text: string, maxLength: number) {
+  if (text.length <= maxLength) return text;
+  const ellipsis = '…';
+  const keep = maxLength - ellipsis.length;
+  const front = Math.ceil(keep / 2);
+  const back = Math.floor(keep / 2);
+  return `${text.slice(0, front)}${ellipsis}${text.slice(text.length - back)}`;
+}
+
 async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDirectory?: string) {
   const targetPath = await fetchCanonicalPath(filePath);
   if (commonDirectory !== undefined) await assertExportPaths([targetPath], getRegistryPath(commonDirectory));
@@ -167,6 +198,54 @@ async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDir
   } finally {
     await unlock();
   }
+}
+
+function wrapVarsCell(vars: SlotVars, maxLine: number) {
+  const text = formatVarsCell(vars);
+  if (text.length <= maxLine) return text;
+  const lines: Array<string> = [];
+  let current = '';
+  for (const part of text.split(', ')) {
+    const candidate = current === '' ? part : `${current}, ${part}`;
+    if (candidate.length > maxLine && current !== '') {
+      lines.push(current);
+      current = part;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current !== '') lines.push(current);
+  return lines.join('\n');
+}
+
+async function formatStatsTable(slots: Array<StatsInput>) {
+  const now = Date.now();
+  const busyLists = await Promise.all(
+    slots.map((slot) => listBusyPorts(slot.firstPort, slot.lastPort, { host: slot.host })),
+  );
+  const termWidth = getTerminalWidth();
+  const pathMax = termWidth === undefined ? Number.POSITIVE_INFINITY : clampWidth(termWidth, 90, 16, 48);
+  const varsMax = termWidth === undefined ? Number.POSITIVE_INFINITY : clampWidth(termWidth, 80, 16, 50);
+  const table = new Table({
+    head: ['SLOT', 'PORTS', 'WORKTREE', 'PATH', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED', 'VARS', 'BUSY PORTS'],
+    style: { border: [], head: [] },
+  });
+  for (const [position, slot] of slots.entries()) {
+    const busy = busyLists[position] ?? [];
+    table.push([
+      String(slot.index),
+      `${slot.firstPort}-${slot.lastPort}`,
+      path.basename(slot.worktreePath) || slot.worktreePath,
+      truncateMiddle(slot.worktreePath, pathMax),
+      formatDistance(slot.lastUsedAt, now, { addSuffix: true }),
+      String(slot.idleTtlMinutes),
+      slot.keep ? 'yes' : 'no',
+      (slot.isExpired ?? isSlotExpired(slot, now)) ? 'yes' : 'no',
+      wrapVarsCell(slot.vars, varsMax),
+      formatBusyCell(busy),
+    ]);
+  }
+  return table.toString();
 }
 
 async function writeReserveJsonFile(filePath: string, vars: SlotVars) {
