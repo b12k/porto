@@ -158,9 +158,9 @@ it('honors false config values and explicit positive boolean flags', async () =>
 
 it('disables configured vars, env and JSON files, and keep with no-* flags', async () => {
   await writeConfig(
-    `export default { start: ${start}, size: 2, keep: true, vars: ['API_PORT'], envFile: '.env.config', jsonFile: 'ports.json' };`,
+    `export default { start: ${start}, size: 2, keep: true, vars: ['API_PORT'], envPath: '.env.config', jsonPath: 'ports.json' };`,
   );
-  expect(await runCliOutput(['reserve', '--no-vars', '--no-env', '--no-json-file', '--no-keep'])).toBe('0\n');
+  expect(await runCliOutput(['reserve', '--no-vars', '--no-env', '--no-json-path', '--no-keep'])).toBe('0\n');
   expect(await readdir(repositoryPath)).toEqual(['.git', 'porto.config.ts']);
   expect(await runCliJson(['show', '--all', '--json'])).toMatchObject([{ keep: false }]);
   const showOutput = await runCliOutput(['show']);
@@ -171,12 +171,12 @@ it('disables configured vars, env and JSON files, and keep with no-* flags', asy
 it('resolves config paths from the config directory and CLI paths from cwd', async () => {
   const nestedPath = path.join(repositoryPath, 'nested');
   await mkdir(nestedPath);
-  await writeConfig(`export default { start: ${start}, size: 2, envFile: 'config.env', jsonFile: 'config.json' };`);
+  await writeConfig(`export default { start: ${start}, size: 2, envPath: 'config.env', jsonPath: 'config.json' };`);
   await runCliOutput(['reserve', '--json'], nestedPath);
   const configJson = await readFile(path.join(repositoryPath, 'config.json'), 'utf8');
   expect(JSON.parse(configJson)).toEqual({ SLOT: 0 });
   expect(await readFile(path.join(repositoryPath, 'config.env'), 'utf8')).toBe('SLOT=0\n');
-  await runCliOutput(['reserve', '--json-file=cli.json', '--env-file=cli.env', '--json'], nestedPath);
+  await runCliOutput(['reserve', '--json-path=cli.json', '--env-path=cli.env', '--json'], nestedPath);
   const cliJson = await readFile(path.join(nestedPath, 'cli.json'), 'utf8');
   expect(JSON.parse(cliJson)).toEqual({ SLOT: 0 });
   expect(await readFile(path.join(nestedPath, 'cli.env'), 'utf8')).toBe('SLOT=0\n');
@@ -186,7 +186,7 @@ it('writes configured files in silent mode and lets --no-silent restore stdout',
   const nestedPath = path.join(repositoryPath, 'nested');
   await mkdir(nestedPath);
   await writeConfig(
-    `export default { start: ${start}, size: 2, envFile: '.env', jsonFile: 'ports.json', silent: true };`,
+    `export default { start: ${start}, size: 2, envPath: '.env', jsonPath: 'ports.json', silent: true };`,
   );
   expect(await runCliOutput([], nestedPath)).toBe('');
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
@@ -200,7 +200,7 @@ it('creates exports only when requested and uses the default env filename and SL
   const args = ['reserve', '--start', String(start), '--size', '2'];
   await runCli(args);
   expect(await readdir(repositoryPath)).toEqual(['.git']);
-  const stdout = await runCliOutput([...args, '--json-file=ports.json', '--env', '--json', '--silent']);
+  const stdout = await runCliOutput([...args, '--json-path=ports.json', '--env', '--json', '--silent']);
   expect(stdout).toBe('');
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
   expect(JSON.parse(jsonOutput)).toEqual({ SLOT: 0 });
@@ -215,19 +215,19 @@ it('writes only SLOT with --env when no variables are configured', async () => {
 });
 
 it('lets an explicit CLI env filename enable env over a disabled config', async () => {
-  await writeConfig(`export default { start: ${start}, size: 2, env: false, envFile: 'config.env' };`);
+  await writeConfig(`export default { start: ${start}, size: 2, env: false, envPath: 'config.env' };`);
   await runCli(['reserve']);
   expect(await readdir(repositoryPath)).toEqual(['.git', 'porto.config.ts']);
   await runCli(['reserve', '--env']);
   expect(await readFile(path.join(repositoryPath, 'config.env'), 'utf8')).toBe('SLOT=0\n');
-  await runCli(['reserve', '--env-file=cli.env']);
+  await runCli(['reserve', '--env-path=cli.env']);
   expect(await readFile(path.join(repositoryPath, 'cli.env'), 'utf8')).toBe('SLOT=0\n');
 });
 
 it('lets --no-env disable an explicit CLI env filename in either flag order', async () => {
   await writeConfig(`export default { start: ${start}, size: 2, env: true };`);
-  await runCli(['reserve', '--env-file=first.env', '--no-env']);
-  await runCli(['reserve', '--no-env', '--env-file=second.env']);
+  await runCli(['reserve', '--env-path=first.env', '--no-env']);
+  await runCli(['reserve', '--no-env', '--env-path=second.env']);
   expect(await readdir(repositoryPath)).toEqual(['.git', 'porto.config.ts']);
 });
 
@@ -259,7 +259,7 @@ it('fails on invalid config before writing a reservation', async () => {
   await expect(readFile(path.join(repositoryPath, '.git', 'porto-registry.json'))).rejects.toThrow(/ENOENT/u);
 });
 
-it.each(['--json-file=.git/porto-registry.json', '--env-file=.git/porto-registry.json.lock'])(
+it.each(['--json-path=.git/porto-registry.json', '--env-path=.git/porto-registry.json.lock'])(
   'rejects a protected registry export before reserving: %s',
   async (option) => {
     await expect(runCli(['reserve', option])).rejects.toThrow('The Porto registry and its lock are reserved.');
@@ -272,11 +272,11 @@ it.each(['--json-file=.git/porto-registry.json', '--env-file=.git/porto-registry
 it('protects the registry through symbolic links and hard links', async () => {
   const registryPath = path.join(repositoryPath, '.git', 'porto-registry.json');
   await symlink(registryPath, path.join(repositoryPath, 'symbolic.json'));
-  await expect(runCli(['reserve', '--json-file=symbolic.json'])).rejects.toThrow('The Porto registry and its lock');
+  await expect(runCli(['reserve', '--json-path=symbolic.json'])).rejects.toThrow('The Porto registry and its lock');
   await runCli(['reserve', '--start', String(start), '--size', '1']);
   const registry = await readFile(registryPath, 'utf8');
   await link(registryPath, path.join(repositoryPath, 'hard.json'));
-  await expect(runCli(['reserve', '--env-file=hard.json'])).rejects.toThrow('The Porto registry and its lock');
+  await expect(runCli(['reserve', '--env-path=hard.json'])).rejects.toThrow('The Porto registry and its lock');
   expect(await readFile(registryPath, 'utf8')).toBe(registry);
 });
 

@@ -79,10 +79,10 @@ it('rejects JSON and env exports that resolve to the same file', async () => {
   await expect(
     execFileAsync(
       process.execPath,
-      ['--import', tsxPath, '--', cliPath, 'reserve', `--json-file=${filePath}`, `--env-file=${linkPath}`],
+      ['--import', tsxPath, '--', cliPath, 'reserve', `--json-path=${filePath}`, `--env-path=${linkPath}`],
       { cwd: directoryPath },
     ),
-  ).rejects.toThrow('--json-file and --env-file must use different files.');
+  ).rejects.toThrow('--json-path and --env-path must use different files.');
   expect(await readFile(filePath, 'utf8')).toBe('OTHER=keep\n');
 });
 
@@ -101,10 +101,10 @@ it.skipIf(process.platform !== 'win32')('rejects case aliases of the same new ex
   await expect(
     execFileAsync(
       process.execPath,
-      ['--import', tsxPath, '--', cliPath, 'reserve', '--json-file=.ENV', '--env-file=.env'],
+      ['--import', tsxPath, '--', cliPath, 'reserve', '--json-path=.ENV', '--env-path=.env'],
       { cwd: directoryPath },
     ),
-  ).rejects.toThrow('--json-file and --env-file must use different files.');
+  ).rejects.toThrow('--json-path and --env-path must use different files.');
 });
 
 it.skipIf(process.platform === 'win32')('preserves file permissions when replacing its contents', async () => {

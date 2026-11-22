@@ -13,11 +13,11 @@ let directoryPath: string;
 function buildRecord(index = 0, worktreeId = '.'): ReservationRecord {
   return {
     env: false,
-    envFile: '.env',
+    envPath: '.env',
     expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     firstPort: 20_000 + index * 2,
     idleTtlMinutes: 60,
-    jsonFile: false,
+    jsonPath: false,
     keep: false,
     lastPort: 20_001 + index * 2,
     lastUsedAt: new Date().toISOString(),

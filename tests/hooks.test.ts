@@ -67,7 +67,7 @@ afterEach(async () => {
 });
 
 it('awaits onReserved after exports and registry unlock, including reused slots', async () => {
-  await writeConfig(`env: true, jsonFile: 'ports.json',
+  await writeConfig(`env: true, jsonPath: 'ports.json',
     async onReserved(slot) {
       const reserved = await getSlot();
       const env = await readFile('.env', 'utf8');

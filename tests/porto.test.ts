@@ -232,7 +232,7 @@ it('fails closed on a corrupt registry and leaves its contents intact', async ()
 });
 it('maps grouped names and templates into stdout, JSON, and env files', async () => {
   const vars = 'API_PORT|CLIENT_HOST=wt{{slot}}.localhost;URL=http://localhost:{{port}}/?port={{port}}|DB_PORT';
-  const result = await runCli(reserveArgs('--vars', vars, '--json-file=ports.json', '--env'));
+  const result = await runCli(reserveArgs('--vars', vars, '--json-path=ports.json', '--env'));
   const output = `API_PORT=${start}\nCLIENT_HOST=wt0.localhost\nURL='http://localhost:${start + 1}/?port=${start + 1}'\nDB_PORT=${start + 1}\n`;
   expect(result.stdout).toBe(output);
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
@@ -247,7 +247,7 @@ it('maps grouped names and templates into stdout, JSON, and env files', async ()
 
 it('preserves JSON template strings without requiring env quoting', async () => {
   const title = 'Bob\'s "dev"';
-  const result = await runCli(reserveArgs('--vars', `TITLE=${title}`, '--json', '--json-file=ports.json'));
+  const result = await runCli(reserveArgs('--vars', `TITLE=${title}`, '--json', '--json-path=ports.json'));
   expect(JSON.parse(result.stdout)).toEqual({ TITLE: title });
   const jsonOutput = await readFile(path.join(repositoryPath, 'ports.json'), 'utf8');
   expect(JSON.parse(jsonOutput)).toEqual({ TITLE: title });
@@ -256,7 +256,7 @@ it('preserves JSON template strings without requiring env quoting', async () => 
 it('updates existing env keys and appends missing ones, preserving comments and CRLF', async () => {
   const envPath = path.join(repositoryPath, '.env.local');
   await writeFile(envPath, '# config\r\nexport API_PORT = 1 # keep\r\nOTHER="untouched"\r\nAPI_PORT=2\r\n');
-  await runCli(reserveArgs('--vars', 'API_PORT;HOST=wt{{slot}}.localhost', '--env-file=.env.local'));
+  await runCli(reserveArgs('--vars', 'API_PORT;HOST=wt{{slot}}.localhost', '--env-path=.env.local'));
   expect(await readFile(envPath, 'utf8')).toBe(
     `# config\r\nexport API_PORT = ${start} # keep\r\nOTHER="untouched"\r\nAPI_PORT=${start}\r\nHOST=wt0.localhost\r\n`,
   );
@@ -265,7 +265,7 @@ it('updates existing env keys and appends missing ones, preserving comments and 
 it('preserves multiline env values and numeric filenames', async () => {
   const envPath = path.join(repositoryPath, '001');
   await writeFile(envPath, 'TEXT="line one\nSLOT=inside\nline three"\nSLOT=9 # keep\n');
-  await runCli(reserveArgs('--json-file=000', '--env-file=001'));
+  await runCli(reserveArgs('--json-path=000', '--env-path=001'));
   const jsonOutput = await readFile(path.join(repositoryPath, '000'), 'utf8');
   expect(JSON.parse(jsonOutput)).toEqual({ SLOT: 0 });
   expect(await readFile(envPath, 'utf8')).toBe('TEXT="line one\nSLOT=inside\nline three"\nSLOT=0 # keep\n');
@@ -279,12 +279,12 @@ it('rejects bad arguments, unknown commands and invalid mapping before allocatin
       reserveArgs('--vars', 'BAD-NAME'),
       reserveArgs('--size', '0'),
       reserveArgs('--idle', 'NaN'),
-      reserveArgs('--json-file='),
-      reserveArgs('--json-file'),
+      reserveArgs('--json-path='),
+      reserveArgs('--json-path'),
       reserveArgs('--write=ports.json'),
       reserveArgs('--no-json'),
-      reserveArgs('--env-file='),
-      reserveArgs('--env-file'),
+      reserveArgs('--env-path='),
+      reserveArgs('--env-path'),
       ['unknown'],
       ['reserve', '--bogus'],
       ['show', 'extra'],

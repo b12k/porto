@@ -11,9 +11,9 @@ import { assertVarsFit, mapSlotToVars, parseVars } from '../src/vars';
 it('applies reservation and output defaults without enabling the default env filename', () => {
   expect(applyReserveDefaults({}, { portsPerSlot: 10, startPort: 10_000 })).toEqual({
     env: false,
-    envFile: '.env',
+    envPath: '.env',
     idleTtlMinutes: 60,
-    jsonFile: false,
+    jsonPath: false,
     silent: false,
     size: 10,
     start: 10_000,
@@ -21,10 +21,10 @@ it('applies reservation and output defaults without enabling the default env fil
 });
 
 it('enables env for an explicit filename unless explicitly disabled', () => {
-  expect(parseConfig({ envFile: 'custom.env' })).toMatchObject({ env: true, envFile: 'custom.env' });
-  expect(parseConfig({ env: false, envFile: 'custom.env' })).toMatchObject({ env: false });
-  expect(() => parseConfig({ envFile: '' })).toThrow(PortoError);
-  expect(() => parseConfig({ envFile: true })).toThrow(PortoError);
+  expect(parseConfig({ envPath: 'custom.env' })).toMatchObject({ env: true, envPath: 'custom.env' });
+  expect(parseConfig({ env: false, envPath: 'custom.env' })).toMatchObject({ env: false });
+  expect(() => parseConfig({ envPath: '' })).toThrow(PortoError);
+  expect(() => parseConfig({ envPath: true })).toThrow(PortoError);
 });
 
 it('rejects the CLI-only json flag in config', () => {

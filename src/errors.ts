@@ -2,7 +2,7 @@ type ErrorsByKey = Record<string, { instruction: string; message: string }>;
 
 export const ERRORS_BY_KEY = {
   configInvalid: { instruction: 'Check porto.config.ts or porto.config.js.', message: 'Invalid Porto configuration.' },
-  exportInvalid: { instruction: 'Check --json-file and --env-file filenames.', message: 'Invalid export options.' },
+  exportInvalid: { instruction: 'Check --json-path and --env-path filenames.', message: 'Invalid export options.' },
   hookFailed: {
     instruction: 'The registry change is already saved. Check the hook in your config.',
     message: 'Lifecycle hook failed.',
