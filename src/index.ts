@@ -8,8 +8,16 @@ import { BusyPortsError } from './busy-ports-error';
 import { PortoError } from './error';
 import { fetchGitContext, listWorktreePaths } from './git';
 import { buildSlot, listBusyPorts } from './ports';
-import { fetchRegistry, getRegistryPath, lockRegistryFile, slotEntries, updateRegistry } from './registry';
-import { checkIsExpired, releaseRecord, removeExpiredRecords } from './reserve';
+import {
+  assertRegistryWriteAllowed,
+  checkIsExpired,
+  fetchRegistry,
+  getRegistryPath,
+  lockRegistryFile,
+  slotEntries,
+  updateRegistry,
+} from './registry';
+import { releaseRecord, removeExpiredRecords } from './reserve';
 
 type ReservationStats = Omit<ReservationRecord, 'worktreeId'> & { index: number; isExpired: boolean };
 
@@ -25,6 +33,7 @@ async function cleanupSlots() {
 }
 
 async function destroy(force = false) {
+  assertRegistryWriteAllowed();
   const { commonDirectory } = await fetchGitContext();
   const filePath = getRegistryPath(commonDirectory);
   const unlock = await lockRegistryFile(filePath);
@@ -53,29 +62,27 @@ function findWorktreeSlot(slots: Registry['slots'], worktreeId: string) {
 async function getAllSlots() {
   const { commonDirectory } = await fetchGitContext();
   const worktreePathsById = await listWorktreePaths(commonDirectory);
-  return updateRegistry(commonDirectory, ({ slots }) => {
-    const now = Date.now();
-    return slotEntries(slots).flatMap(({ index, record }) => {
-      const { worktreeId, ...slotFields } = record;
-      const worktreePath = worktreePathsById.get(worktreeId) ?? record.worktreePath;
-      return [
-        { ...slotFields, index, isExpired: checkIsExpired(record, now), worktreePath } satisfies ReservationStats,
-      ];
-    });
+  // Atomic snapshot read without the registry lock, so a keep predicate
+  // Awaiting getSlot() cannot deadlock on its own update.
+  const { slots } = await fetchRegistry(getRegistryPath(commonDirectory));
+  const now = Date.now();
+  return slotEntries(slots).flatMap(({ index, record }) => {
+    const { worktreeId, ...slotFields } = record;
+    const worktreePath = worktreePathsById.get(worktreeId) ?? record.worktreePath;
+    return [{ ...slotFields, index, isExpired: checkIsExpired(record, now), worktreePath } satisfies ReservationStats];
   });
 }
 
 async function getSlot(slotIndex?: number) {
   if (slotIndex !== undefined) assertSlotIndexValid(slotIndex);
   const { commonDirectory, worktreeId } = await fetchGitContext();
-  return updateRegistry(commonDirectory, ({ slots }) => {
-    if (slotIndex !== undefined) {
-      const record = slots[slotIndex];
-      return record ? buildSlot(record, slotIndex) : undefined;
-    }
-    const found = findWorktreeSlot(slots, worktreeId);
-    return found ? buildSlot(found.record, found.index) : undefined;
-  });
+  const { slots } = await fetchRegistry(getRegistryPath(commonDirectory));
+  if (slotIndex !== undefined) {
+    const record = slots[slotIndex];
+    return record ? buildSlot(record, slotIndex) : undefined;
+  }
+  const found = findWorktreeSlot(slots, worktreeId);
+  return found ? buildSlot(found.record, found.index) : undefined;
 }
 
 async function releaseAllSlots(force = false) {

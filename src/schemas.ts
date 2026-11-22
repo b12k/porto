@@ -6,9 +6,7 @@ import type { PortSlot } from './ports';
 import { parseSchema } from './parse';
 import { VAR_VALUES_SCHEMA } from './vars';
 
-const SLOT_HOOK_SCHEMA = z.custom<(slot: PortSlot, ports: Array<number>) => Promise<void> | void>(
-  (hook) => typeof hook === 'function',
-);
+const SLOT_HOOK_SCHEMA = z.custom<(slot: PortSlot) => Promise<void> | void>((hook) => typeof hook === 'function');
 
 type KeepPredicate = (slot: PortSlot) => boolean | Promise<boolean>;
 

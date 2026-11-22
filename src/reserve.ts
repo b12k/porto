@@ -13,9 +13,9 @@ import { applyReserveDefaults } from './config';
 import { PortoError } from './error';
 import { fetchGitContext } from './git';
 import { buildSlot, checkHasBusyPort, listBusyPorts } from './ports';
-import { slotEntries, updateRegistry } from './registry';
+import { checkIsExpired, slotEntries, updateRegistry } from './registry';
 import { parseOptions } from './schemas';
-import { assertVarsFit, mapSlotToVars, parseVarEntries } from './vars';
+import { assertVarsFit, formatEnvironment, mapSlotToVars, parseVarEntries } from './vars';
 
 type ReservedSlot<Entries extends Vars = Vars> = Omit<ReturnType<typeof buildSlot<ReservationRecord>>, 'vars'> & {
   vars: Entries extends readonly [] ? { SLOT: number } : VarsResult<Entries>;
@@ -40,10 +40,6 @@ async function allocateRecord(registry: Registry, options: Omit<ReservationRecor
   throw new PortoError('slotUnavailable');
 }
 
-function checkIsExpired(record: Pick<ReservationRecord, 'expiresAt' | 'keep'>, now: number) {
-  return !record.keep && now > Date.parse(record.expiresAt);
-}
-
 function issuePorts(record: ReservationRecord, index: number, entries: Vars) {
   const { firstPort } = record;
   // SLOT is the default only when no other variables are mapped; otherwise map it explicitly.
@@ -52,11 +48,11 @@ function issuePorts(record: ReservationRecord, index: number, entries: Vars) {
   return buildSlot(record, index);
 }
 
-async function removeExpiredRecords(registry: Registry, now: number) {
+async function removeExpiredRecords(registry: Registry, now: number, excludeIndex = -1) {
   const expiredSlots = compact(
     await Promise.all(
       slotEntries(registry.slots)
-        .filter(({ record }) => checkIsExpired(record, now))
+        .filter(({ index, record }) => index !== excludeIndex && checkIsExpired(record, now))
         .map(async ({ index, record }) =>
           (await checkHasBusyPort(record.firstPort, record.lastPort, record.host))
             ? undefined
@@ -82,11 +78,21 @@ async function resolveKeep(keep: boolean | KeepPredicate | undefined, slot: Port
   return keep ?? fallback();
 }
 
+function snapshotSlotForKeep(slot: PortSlot): PortSlot {
+  // The predicate only observes the slot: any mutation must not reach the saved record.
+  const snapshot = { ...slot, ports: [...slot.ports], vars: { ...slot.vars } };
+  Object.freeze(snapshot.ports);
+  Object.freeze(snapshot.vars);
+  return Object.freeze(snapshot);
+}
+
 function commitReservation(
   { commonDirectory, worktreeId, worktreePath }: Awaited<ReturnType<typeof fetchGitContext>>,
-  { vars = [], ...options }: Omit<PortoConfig, 'onReleased' | 'onReserved'>,
+  { vars: entries, ...options }: Omit<PortoConfig, 'onReleased' | 'onReserved'>,
+  validation?: { envFormat?: boolean },
 ) {
   return updateRegistry(commonDirectory, async (registry) => {
+    const vars = entries ?? [];
     const { env, envFile, host, idleTtlMinutes, jsonFile, keep, silent, size, start } = applyReserveDefaults(
       options,
       registry,
@@ -114,13 +120,10 @@ function commitReservation(
       worktreePath,
     };
     if (existingRecord) {
-      // Guard the slot being reserved against idle cleanup; the final value is resolved below.
-      Object.assign(existingRecord, baseSettings, {
-        expiresAt: new Date(now + idleTtlMinutes * 60_000).toISOString(),
-        keep: true,
-      });
+      Object.assign(existingRecord, baseSettings, { expiresAt: new Date(now + idleTtlMinutes * 60_000).toISOString() });
     }
-    await removeExpiredRecords(registry, now);
+    // The slot being reserved is touched above, so it must survive idle cleanup by index.
+    await removeExpiredRecords(registry, now, existingIndex);
     const { index, record } = existingRecord
       ? { index: existingIndex, record: existingRecord }
       : await allocateRecord(registry, {
@@ -132,9 +135,14 @@ function commitReservation(
         });
     // A failed factory must leave the registry untouched.
     const slot = issuePorts(record, index, vars);
+    if (validation?.envFormat) {
+      // Fail before the registry is written: env output must be able to render every value.
+      formatEnvironment(record.vars);
+    }
     // Keep is resolved after variables are mapped so predicates can use slot.vars.
-    record.keep = await resolveKeep(keep, slot, () => previousKeep);
-    return slot;
+    record.keep = await resolveKeep(keep, snapshotSlotForKeep(slot), () => previousKeep);
+    // The returned slot must carry the resolved keep value instead of the pre-resolution one.
+    return buildSlot(record, index);
   });
 }
 
@@ -158,5 +166,5 @@ async function reserve(options: ReserveOptions = {}) {
   const git = await fetchGitContext();
   return commitReservation(git, { ...parseOptions(optionsWithoutVars), vars });
 }
-export { checkIsExpired, commitReservation, releaseRecord, removeExpiredRecords, reserve };
+export { commitReservation, releaseRecord, removeExpiredRecords, reserve };
 export type { ReserveOptions };

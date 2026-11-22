@@ -58,9 +58,7 @@ async function runHook(hookName: string, hook: () => Promise<void> | void) {
 
 async function runReleaseHooks(onReleased: PortoConfig['onReleased'], slots: Array<PortSlot>) {
   if (!onReleased) return;
-  const results = await Promise.allSettled(
-    slots.map((slot) => runHook('onReleased', () => onReleased(slot, slot.ports))),
-  );
+  const results = await Promise.allSettled(slots.map((slot) => runHook('onReleased', () => onReleased(slot))));
   const failure = results.find((result) => result.status === 'rejected');
   if (failure) throw failure.reason;
 }
@@ -73,14 +71,20 @@ async function handleReserve(flags: ReserveFlags, command: Command) {
   const git = await fetchGitContext();
   const { json, onReserved, vars: resolvedVars, ...settings } = await fetchSettings(flags, command, git.worktreePath);
   const { envPath, jsonPath } = await fetchExportPaths(resolveOutputSettings(settings), git.commonDirectory);
-  const slot = await commitReservation(git, { ...settings, vars: resolvedVars });
+  // Values that cannot be rendered as env lines must fail before the registry is written.
+  const needsEnvFormat = envPath !== undefined || (!(settings.silent ?? false) && !json && resolvedVars !== undefined);
+  const slot = await commitReservation(
+    git,
+    { ...settings, vars: resolvedVars },
+    needsEnvFormat ? { envFormat: true } : undefined,
+  );
   const vars = resolvedVars === undefined ? undefined : slot.vars;
   const output = slot.silent ? undefined : formatReserveOutput(slot, vars, json);
   if (jsonPath) await writeReserveJsonFile(jsonPath, slot.vars);
   if (envPath) {
     await updateEnvironmentFile(envPath, slot.vars, git.commonDirectory);
   }
-  if (onReserved) await runHook('onReserved', () => onReserved(slot, slot.ports));
+  if (onReserved) await runHook('onReserved', () => onReserved(slot));
   if (output !== undefined) writeOutput(output);
 }
 

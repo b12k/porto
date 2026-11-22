@@ -148,12 +148,16 @@ export default defineConfig({
   envFile: '.env.local',
   jsonFile: 'ports.json',
   silent: false,
-  vars: ['PORT', (port, slot) => ({ PORT_2: port, HOST_NAME: `https://localhost:${port}`, SLOT: slot }), 'DB_PORT'],
-  onReserved(slot, ports) {
-    console.error(`Reserved slot ${slot.index} with ports ${ports.join(', ')}`);
+  vars: [
+    'PORT',
+    (port, slotIndex) => ({ PORT_2: port, HOST_NAME: `https://localhost:${port}`, SLOT: slotIndex }),
+    'DB_PORT',
+  ],
+  onReserved(slot) {
+    console.error(`Reserved slot ${slot.index} with ports ${slot.ports.join(', ')}`);
   },
-  onReleased(slot, ports) {
-    console.error(`Released slot ${slot.index} with ports ${ports.join(', ')}`);
+  onReleased(slot) {
+    console.error(`Released slot ${slot.index} with ports ${slot.ports.join(', ')}`);
   },
 });
 ```
@@ -169,7 +173,7 @@ A `vars` function receives `(port, slot)`. Return an object with string or numbe
 
 A `keep` function receives the slot and returns whether to keep it during idle cleanup. It runs on every `reserve` after variables are mapped, so `slot.vars` can be used in the decision — for example, `keep: (slot) => slot.index === 0` pins the first slot while other slots expire normally. CLI `--keep` / `--no-keep` flags override the configured value.
 
-Both hooks receive `(slot, ports)`, where `ports` lists the ports assigned to that slot. Hooks can return a promise.
+Both hooks receive `(slot)`, where `slot.ports` lists the ports assigned to that slot. Hooks can return a promise.
 
 ### API
 

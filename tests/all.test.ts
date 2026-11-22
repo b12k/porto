@@ -116,8 +116,8 @@ it('releases free slots on a busy-port failure and runs hooks for every freed sl
   await writeFile(
     path.join(directoryPath, 'porto.config.ts'),
     `import { appendFileSync } from 'node:fs';
-    export default { onReleased(slot, ports) {
-      appendFileSync('released.jsonl', JSON.stringify({ index: slot.index, ports }) + '\\n');
+    export default { onReleased(slot) {
+      appendFileSync('released.jsonl', JSON.stringify({ index: slot.index, ports: slot.ports }) + '\\n');
     } };`,
   );
   const registryPath = path.join(directoryPath, '.git', 'porto-registry.json');

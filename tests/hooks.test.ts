@@ -68,14 +68,14 @@ afterEach(async () => {
 
 it('awaits onReserved after exports and registry unlock, including reused slots', async () => {
   await writeConfig(`env: true, jsonFile: 'ports.json',
-    async onReserved(slot, ports) {
+    async onReserved(slot) {
       const reserved = await getSlot();
       const env = await readFile('.env', 'utf8');
       const json = JSON.parse(await readFile('ports.json', 'utf8'));
       if (reserved?.firstPort !== slot.firstPort || json.SLOT !== slot.index || env !== 'SLOT=' + slot.index + '\\n') {
         throw new Error('Hook ran before reservation or exports completed.');
       }
-      await appendFile('reserved.txt', slot.index + ':' + ports.join(',') + '\\n');
+      await appendFile('reserved.txt', slot.index + ':' + slot.ports.join(',') + '\\n');
     }`);
   const first = await runCli(['reserve']);
   const second = await runCli(['reserve']);
@@ -87,9 +87,9 @@ it('awaits onReserved after exports and registry unlock, including reused slots'
 });
 
 it('passes one port per variable entry to onReserved even when it produces multiple variables', async () => {
-  await writeConfig(`vars: [(port, _slot) => ({ API_PORT: port, API_PORT_ALIAS: port })], onReserved(slot, ports) {
-    if (ports[0] !== slot.getPort()) throw new Error('Missing assigned port.');
-    writeFileSync('reserved.json', JSON.stringify({ index: slot.index, ports }));
+  await writeConfig(`vars: [(port, _slot) => ({ API_PORT: port, API_PORT_ALIAS: port })], onReserved(slot) {
+    if (slot.ports[0] !== slot.getPort()) throw new Error('Missing assigned port.');
+    writeFileSync('reserved.json', JSON.stringify({ index: slot.index, ports: slot.ports }));
   }`);
   const { stdout } = await runCli(['reserve', '--json']);
   expect(JSON.parse(stdout)).toEqual({ API_PORT: start, API_PORT_ALIAS: start });
@@ -98,9 +98,9 @@ it('passes one port per variable entry to onReserved even when it produces multi
 });
 
 it('calls onReleased for the current slot with saved assigned ports after config changes', async () => {
-  const hooks = `async onReleased(slot, ports) {
+  const hooks = `async onReleased(slot) {
     if ((await getSlot()) !== undefined) throw new Error('Hook ran before release completed.');
-    await appendFile('released.txt', slot.firstPort + ':' + ports.join(',') + '\\n');
+    await appendFile('released.txt', slot.firstPort + ':' + slot.ports.join(',') + '\\n');
   }`;
   await writeConfig(`vars: [(port, _slot) => ({ API_PORT: port, API_PORT_ALIAS: port })], ${hooks}`);
   await runCli(['reserve']);
@@ -118,8 +118,8 @@ it('does not call onReleased when the current checkout has no reservations', asy
 });
 
 it('defaults to the current checkout and passes the selected slot to release hooks', async () => {
-  await writeConfig(`vars: ['API_PORT'], onReleased(slot, ports) {
-    writeFileSync('released.json', JSON.stringify({ index: slot.index, ports }));
+  await writeConfig(`vars: ['API_PORT'], onReleased(slot) {
+    writeFileSync('released.json', JSON.stringify({ index: slot.index, ports: slot.ports }));
   }`);
   await runCli(['reserve']);
   const otherPath = await createWorktree();
@@ -135,7 +135,7 @@ it('defaults to the current checkout and passes the selected slot to release hoo
 });
 
 it('keeps previously issued ports until release when vars change or are omitted', async () => {
-  const hooks = `onReleased(slot, ports) { writeFileSync('released.json', JSON.stringify(ports)); }`;
+  const hooks = `onReleased(slot) { writeFileSync('released.json', JSON.stringify(slot.ports)); }`;
   await writeConfig(`vars: ['API_PORT'], ${hooks}`);
   await runCli(['reserve']);
   await writeConfig(`vars: ['API_PORT', 'OTHER_PORT'], ${hooks}`);
