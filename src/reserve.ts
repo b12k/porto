@@ -198,5 +198,5 @@ async function reserve(options: ReserveOptions = {}) {
   const git = await fetchGitContext();
   return commitReservation(git, { ...parseOptions(optionsWithoutVars), vars });
 }
-export { commitReservation, releaseRecord, removeExpiredRecords, reserve };
+export { commitReservation, isAddressUnavailableError, releaseRecord, removeExpiredRecords, reserve };
 export type { ReserveOptions };

@@ -3,7 +3,6 @@ import path from 'node:path';
 
 import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath } from './files';
-import { WORKTREE_ID_FILENAME } from './git';
 import { getRegistryPath } from './registry';
 
 async function fetchFileIdentity(filePath: string) {
@@ -21,50 +20,45 @@ function normalizePathForComparison(filePath: string) {
   return process.platform === 'darwin' ? filePath.toLowerCase() : filePath;
 }
 
-async function assertExportPaths(
-  exportPaths: Array<string>,
-  registryPath: string,
-  extraProtectedPaths: Array<string> = [],
-) {
-  if (exportPaths.length === 0 && extraProtectedPaths.length === 0) return;
-  // Overwriting a worktree identity file detaches its slot: the worktree
-  // Loses its reservation and later reserves take new slots.
-  const normalizedIdName = normalizePathForComparison(WORKTREE_ID_FILENAME);
-  if (exportPaths.some((filePath) => normalizePathForComparison(path.basename(filePath)) === normalizedIdName)) {
-    throw new PortoError('exportInvalid', 'The Porto worktree ID file is reserved.');
-  }
+async function assertExportPaths(exportPaths: Array<string>, commonDirectory: string) {
+  if (exportPaths.length === 0) return;
+  const registryPath = getRegistryPath(commonDirectory);
   const lockPath = `${registryPath}.lock`;
   const [registryTarget, lockTarget] = await Promise.all([
     fetchCanonicalPath(registryPath),
     fetchCanonicalPath(lockPath),
   ]);
-  const extraTargets = await Promise.all(extraProtectedPaths.map((filePath) => fetchCanonicalPath(filePath)));
   const registryPaths = new Set([registryPath, registryTarget].map((filePath) => normalizePathForComparison(filePath)));
   const lockPaths = [lockPath, lockTarget].map((filePath) => normalizePathForComparison(filePath));
-  const extraPaths = new Set(
-    [...extraProtectedPaths, ...extraTargets].map((filePath) => normalizePathForComparison(filePath)),
+  const [registryIdentity, lockIdentity, ...exportIdentities] = await Promise.all(
+    [registryTarget, lockTarget, ...exportPaths].map((filePath) => fetchFileIdentity(filePath)),
   );
-  const [registryIdentity, lockIdentity, ...otherIdentities] = await Promise.all(
-    [registryTarget, lockTarget, ...extraTargets, ...exportPaths].map((filePath) => fetchFileIdentity(filePath)),
-  );
-  const protectedIdentities = new Set(
-    [registryIdentity, lockIdentity, ...otherIdentities.slice(0, extraTargets.length)].filter(
-      (identity): identity is string => typeof identity === 'string',
-    ),
-  );
-  const exportIdentities = otherIdentities.slice(extraTargets.length);
   const hasProtectedPath = exportPaths.some((filePath) => {
     const normalizedPath = normalizePathForComparison(filePath);
     return (
       registryPaths.has(normalizedPath) ||
-      extraPaths.has(normalizedPath) ||
       lockPaths.some(
         (targetPath) => normalizedPath === targetPath || normalizedPath.startsWith(`${targetPath}${path.sep}`),
       )
     );
   });
-  if (hasProtectedPath || exportIdentities.some((identity) => identity && protectedIdentities.has(identity))) {
+  if (
+    hasProtectedPath ||
+    exportIdentities.some((identity) => identity && (identity === registryIdentity || identity === lockIdentity))
+  ) {
     throw new PortoError('exportInvalid', 'The Porto registry and its lock are reserved.');
+  }
+  // Exports must stay out of the actual Git service directory: overwriting
+  // Files there breaks Git itself, while ordinary files with colliding names
+  // Outside of it are legitimate export targets.
+  const canonicalCommon = await fetchCanonicalPath(commonDirectory);
+  const insideGit = exportPaths.filter((filePath) => {
+    const normalizedPath = normalizePathForComparison(filePath);
+    const normalizedCommon = normalizePathForComparison(canonicalCommon);
+    return normalizedPath === normalizedCommon || normalizedPath.startsWith(`${normalizedCommon}${path.sep}`);
+  });
+  if (insideGit.length > 0) {
+    throw new PortoError('exportInvalid', `Exports inside the Git directory are reserved: ${insideGit[0]}`);
   }
 }
 
@@ -85,10 +79,24 @@ async function assertExportTargetsAreFiles(exportPaths: Array<string>) {
   );
 }
 
+async function assertLockPathUsable(lockPath: string) {
+  let targetStat;
+  try {
+    targetStat = await stat(lockPath);
+  } catch (error) {
+    if (checkIsFileMissing(error)) return;
+    throw error;
+  }
+  // A regular file where the lock directory belongs makes locking fail after
+  // Retries while the registry stays locked; reject it before booking.
+  if (!targetStat.isDirectory()) {
+    throw new PortoError('exportInvalid', `Export conflicts with an existing file: ${lockPath}`);
+  }
+}
+
 async function fetchExportPaths(
   settings: { env: boolean; envPath: string; jsonPath: false | string },
   commonDirectory: string,
-  extraProtectedPaths: Array<string> = [],
 ) {
   const jsonPath = settings.jsonPath ? await fetchCanonicalPath(path.resolve(settings.jsonPath)) : undefined;
   const envPath = settings.env ? await fetchCanonicalPath(path.resolve(settings.envPath)) : undefined;
@@ -97,6 +105,9 @@ async function fetchExportPaths(
     envPath !== undefined &&
     normalizePathForComparison(jsonPath) === normalizePathForComparison(envPath);
   if (arePathsEqual) throw new PortoError('exportInvalid', '--json-path and --env-path must use different files.');
+  if (envPath !== undefined) {
+    await assertLockPathUsable(await fetchCanonicalPath(`${envPath}.lock`));
+  }
   if (envPath !== undefined && jsonPath !== undefined) {
     // The env file is written under a lock directory next to it; a JSON
     // Export there would block the lock and hold the registry lock for retries.
@@ -108,9 +119,9 @@ async function fetchExportPaths(
     }
   }
   const exportPaths = [jsonPath, envPath].filter((filePath) => filePath !== undefined);
-  await assertExportPaths(exportPaths, getRegistryPath(commonDirectory), extraProtectedPaths);
+  await assertExportPaths(exportPaths, commonDirectory);
   await assertExportTargetsAreFiles(exportPaths);
   return { envPath, jsonPath };
 }
 
-export { assertExportPaths, assertExportTargetsAreFiles, fetchExportPaths, normalizePathForComparison };
+export { assertExportPaths, assertLockPathUsable, fetchExportPaths };

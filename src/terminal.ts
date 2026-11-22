@@ -136,13 +136,34 @@ function formatLabeledField(label: string, value: string, termWidth: number) {
   return [`${prefix}${first}`, ...rest].join('\n');
 }
 
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
 function truncateMiddle(text: string, maxLength: number) {
   if (displayWidth(text) <= maxLength) return text;
   const ellipsis = '…';
   const keep = maxLength - displayWidth(ellipsis);
   const front = Math.ceil(keep / 2);
   const back = Math.floor(keep / 2);
-  return `${text.slice(0, front)}${ellipsis}${text.slice(text.length - back)}`;
+  const segments = [...graphemeSegmenter.segment(text)].map((segment) => segment.segment);
+  const head: Array<string> = [];
+  let headWidth = 0;
+  for (const segment of segments) {
+    const width = displayWidth(segment);
+    if (headWidth + width > front) break;
+    head.push(segment);
+    headWidth += width;
+  }
+  const tail: Array<string> = [];
+  let tailWidth = 0;
+  for (let position = segments.length - 1; position >= 0; position -= 1) {
+    const segment = segments[position];
+    if (segment === undefined) break;
+    const width = displayWidth(segment);
+    if (tailWidth + width > back) break;
+    tail.unshift(segment);
+    tailWidth += width;
+  }
+  return `${head.join('')}${ellipsis}${tail.join('')}`;
 }
 
 export { displayWidth, formatLabeledField, maxLineDisplayWidth, truncateMiddle, wrapCommaValue, wrapTextByWidth };
