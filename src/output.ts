@@ -3,7 +3,6 @@ import Table from 'cli-table3';
 import { formatDistance } from 'date-fns/formatDistance';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { setTimeout } from 'node:timers/promises';
 import lockfile from 'proper-lockfile';
 
 import type { SlotVars } from './vars';
@@ -197,10 +196,6 @@ async function formatStatsTable(slots: Array<StatsInput>, terminalWidth?: number
 }
 
 async function writeReserveJsonFile(filePath: string, vars: SlotVars) {
-  // Test-only hook for the export-race test: hold the registry lock inside
-  // The export window while the test starts the overlapping reservation.
-  const delayMs = Number(process.env['PORTO_TEST_EXPORT_DELAY_MS'] ?? 0);
-  if (delayMs > 0) await setTimeout(delayMs);
   await writeFileAtomically(filePath, `${JSON.stringify(vars)}\n`);
 }
 
