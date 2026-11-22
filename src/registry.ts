@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
@@ -8,6 +9,22 @@ import { DEFAULT_CONFIG } from './config';
 import { PortoError } from './error';
 import { checkIsFileMissing, writeFileAtomically } from './files';
 import { REGISTRY_SCHEMA } from './schemas';
+
+const registryUpdateContext = new AsyncLocalStorage<number>();
+
+function assertRegistryWriteAllowed() {
+  if ((registryUpdateContext.getStore() ?? 0) > 0) {
+    const error = new Error('Registry update cannot be started from inside a registry update callback.') as Error & {
+      code?: string;
+    };
+    error.code = 'ELOCKED';
+    throw error;
+  }
+}
+
+function checkIsExpired(record: Pick<ReservationRecord, 'expiresAt' | 'keep'>, now: number) {
+  return !record.keep && now > Date.parse(record.expiresAt);
+}
 
 async function fetchRegistry(filePath: string): Promise<Registry> {
   try {
@@ -46,12 +63,13 @@ async function updateRegistry<Result>(
   commonDirectory: string,
   handleRegistry: (registry: Registry) => Promise<Result> | Result,
 ) {
+  assertRegistryWriteAllowed();
   const filePath = getRegistryPath(commonDirectory);
   const unlock = await lockRegistryFile(filePath);
   try {
     const registry = await fetchRegistry(filePath);
     const previousContents = JSON.stringify(registry);
-    const result = await handleRegistry(registry);
+    const result = await registryUpdateContext.run(1, () => handleRegistry(registry));
     await writeRegistry(filePath, registry, previousContents);
     return result;
   } finally {
@@ -59,5 +77,13 @@ async function updateRegistry<Result>(
   }
 }
 
-export { fetchRegistry, getRegistryPath, lockRegistryFile, slotEntries, updateRegistry };
+export {
+  assertRegistryWriteAllowed,
+  checkIsExpired,
+  fetchRegistry,
+  getRegistryPath,
+  lockRegistryFile,
+  slotEntries,
+  updateRegistry,
+};
 export type { Registry, ReservationRecord } from './schemas';

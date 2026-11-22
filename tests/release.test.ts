@@ -266,8 +266,8 @@ it('runs release hooks only for slots removed by each call', async () => {
   await writeFile(
     path.join(directoryPath, 'porto.config.ts'),
     `import { appendFileSync } from 'node:fs';
-     export default { onReleased(slot, ports) {
-       appendFileSync('released.jsonl', JSON.stringify({ index: slot.index, ports }) + '\\n');
+     export default { onReleased(slot) {
+       appendFileSync('released.jsonl', JSON.stringify({ index: slot.index, ports: slot.ports }) + '\\n');
      } };`,
   );
   await reserveSlot(1);

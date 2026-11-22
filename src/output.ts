@@ -9,7 +9,8 @@ import type { SlotVars } from './vars';
 import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
 import { listBusyPorts } from './ports';
-import { getRegistryPath } from './registry';
+import { checkIsExpired, getRegistryPath } from './registry';
+import { formatEnvironment, formatEnvironmentValue } from './vars';
 
 // Match unrelated names too so their quoted values are skipped as a unit.
 const ENV_ASSIGNMENT_PATTERN =
@@ -109,18 +110,12 @@ function formatBusyCell(ports: Array<number>) {
   return ports.join(', ');
 }
 
-function formatEnvironmentValue(value: number | string) {
-  const text = String(value);
-  if (/^[A-Za-z0-9_./:@%+,-]*$/u.test(text)) return text;
-  if (!text.includes("'")) return `'${text}'`;
-  if (!text.includes('"') && !text.includes('\\')) return `"${text}"`;
-  throw new PortoError('mappingInvalid', 'Value cannot be represented safely on a single env line.');
-}
-
-function formatEnvironment(vars: SlotVars) {
-  return Object.entries(vars)
-    .map(([name, value]) => `${name}=${formatEnvironmentValue(value)}`)
-    .join('\n');
+async function fetchBusyCell(slot: Pick<StatsInput, 'firstPort' | 'host' | 'lastPort'>) {
+  try {
+    return formatBusyCell(await listBusyPorts(slot.firstPort, slot.lastPort, { host: slot.host }));
+  } catch {
+    return 'unknown';
+  }
 }
 
 function formatReserveOutput(
@@ -152,10 +147,6 @@ function getTerminalWidth(): number | undefined {
     if (typeof width === 'number' && Number.isFinite(width) && width > 0) return width;
   }
   return undefined;
-}
-
-function isSlotExpired(slot: Pick<StatsInput, 'expiresAt' | 'keep'>, now: number) {
-  return !slot.keep && now > Date.parse(slot.expiresAt);
 }
 
 async function saveEnvironmentFile(filePath: string, vars: SlotVars) {
@@ -218,12 +209,36 @@ function wrapVarsCell(vars: SlotVars, maxLine: number) {
   return lines.join('\n');
 }
 
+const NARROW_TERMINAL_WIDTH = 80;
+
+function formatStatsVertical(slots: Array<StatsInput>, busyCells: Array<string>) {
+  const now = Date.now();
+  return slots
+    .map((slot, position) =>
+      [
+        `SLOT ${slot.index}`,
+        `  PORTS: ${slot.firstPort}-${slot.lastPort}`,
+        `  WORKTREE: ${path.basename(slot.worktreePath) || slot.worktreePath}`,
+        `  PATH: ${slot.worktreePath}`,
+        `  LAST USED: ${formatDistance(slot.lastUsedAt, now, { addSuffix: true })}`,
+        `  IDLE (MIN): ${slot.idleTtlMinutes}`,
+        `  KEEP: ${slot.keep ? 'yes' : 'no'}`,
+        `  EXPIRED: ${(slot.isExpired ?? checkIsExpired(slot, now)) ? 'yes' : 'no'}`,
+        `  VARS: ${formatVarsCell(slot.vars)}`,
+        `  BUSY PORTS: ${busyCells[position] ?? 'unknown'}`,
+      ].join('\n'),
+    )
+    .join('\n\n');
+}
+
 async function formatStatsTable(slots: Array<StatsInput>) {
   const now = Date.now();
-  const busyLists = await Promise.all(
-    slots.map((slot) => listBusyPorts(slot.firstPort, slot.lastPort, { host: slot.host })),
-  );
+  // A slot whose saved host is gone from this machine must not hide the other rows.
+  const busyCells = await Promise.all(slots.map((slot) => fetchBusyCell(slot)));
   const termWidth = getTerminalWidth();
+  if (termWidth !== undefined && termWidth <= NARROW_TERMINAL_WIDTH && slots.length > 0) {
+    return formatStatsVertical(slots, busyCells);
+  }
   const pathMax = termWidth === undefined ? Number.POSITIVE_INFINITY : clampWidth(termWidth, 90, 16, 48);
   const varsMax = termWidth === undefined ? Number.POSITIVE_INFINITY : clampWidth(termWidth, 80, 16, 50);
   const table = new Table({
@@ -231,7 +246,7 @@ async function formatStatsTable(slots: Array<StatsInput>) {
     style: { border: [], head: [] },
   });
   for (const [position, slot] of slots.entries()) {
-    const busy = busyLists[position] ?? [];
+    const busy = busyCells[position] ?? 'unknown';
     table.push([
       String(slot.index),
       `${slot.firstPort}-${slot.lastPort}`,
@@ -240,9 +255,9 @@ async function formatStatsTable(slots: Array<StatsInput>) {
       formatDistance(slot.lastUsedAt, now, { addSuffix: true }),
       String(slot.idleTtlMinutes),
       slot.keep ? 'yes' : 'no',
-      (slot.isExpired ?? isSlotExpired(slot, now)) ? 'yes' : 'no',
+      (slot.isExpired ?? checkIsExpired(slot, now)) ? 'yes' : 'no',
       wrapVarsCell(slot.vars, varsMax),
-      formatBusyCell(busy),
+      busy,
     ]);
   }
   return table.toString();
@@ -252,9 +267,9 @@ async function writeReserveJsonFile(filePath: string, vars: SlotVars) {
   await writeFileAtomically(filePath, `${JSON.stringify(vars)}\n`);
 }
 
+export { formatEnvironment } from './vars';
 export {
   fetchExportPaths,
-  formatEnvironment,
   formatReserveOutput,
   formatStatsTable,
   formatTable,

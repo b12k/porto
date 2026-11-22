@@ -34,11 +34,11 @@ it('rejects the CLI-only json flag in config', () => {
 it('validates hooks without executing them and infers their slot arguments', () => {
   let callsCount = 0;
   const config = defineConfig({
-    onReleased(slot, ports) {
-      callsCount += ports[0] ?? slot.firstPort;
+    onReleased(slot) {
+      callsCount += slot.ports[0] ?? slot.firstPort;
     },
-    onReserved(slot, ports) {
-      callsCount += slot.getPort() + ports.reduce((total, port) => total + port, 0);
+    onReserved(slot) {
+      callsCount += slot.getPort() + slot.ports.reduce((total, port) => total + port, 0);
     },
   });
   const settings = parseConfig(config);

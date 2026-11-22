@@ -8,7 +8,9 @@ import { PortoError } from './error';
 import { parseSchema } from './parse';
 
 type SlotVars = Record<string, number | string>;
+
 type VarEntry = string | VarFactory;
+
 type VarEntryResult<Entry extends VarEntry> = Entry extends string
   ? string extends Entry
     ? Partial<Record<string, number>>
@@ -26,6 +28,18 @@ type VarsResult<Entries extends Vars> = Entries extends readonly [
   : number extends Entries['length']
     ? Partial<Record<string, number | string>>
     : object;
+function formatEnvironmentValue(value: number | string) {
+  const text = String(value);
+  if (/^[A-Za-z0-9_./:@%+,-]*$/u.test(text)) return text;
+  if (!text.includes("'")) return `'${text}'`;
+  if (!text.includes('"') && !text.includes('\\')) return `"${text}"`;
+  throw new PortoError('mappingInvalid', 'Value cannot be represented safely on a single env line.');
+}
+function formatEnvironment(vars: SlotVars) {
+  return Object.entries(vars)
+    .map(([name, value]) => `${name}=${formatEnvironmentValue(value)}`)
+    .join('\n');
+}
 
 const VAR_NAME_SCHEMA = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
 const VAR_TEXT_SCHEMA = z.string().regex(/^[^\r\n\0]*$/u);
@@ -122,5 +136,14 @@ function parseVars(source: string) {
   });
 }
 
-export { assertVarsFit, mapSlotToVars, parseVarEntries, parseVars, VAR_VALUES_SCHEMA, VARS_SCHEMA };
+export {
+  assertVarsFit,
+  formatEnvironment,
+  formatEnvironmentValue,
+  mapSlotToVars,
+  parseVarEntries,
+  parseVars,
+  VAR_VALUES_SCHEMA,
+  VARS_SCHEMA,
+};
 export type { SlotVars, VarEntry, VarFactory, Vars, VarsResult };
