@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile, realpath, writeFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { PortoError } from './error';
-import { checkIsFileMissing } from './files';
+import { checkIsFileMissing, writeFileAtomically } from './files';
 
 const execFileAsync = promisify(execFile);
 const WORKTREE_ID_FILENAME = 'porto-worktree-id';
@@ -25,17 +25,11 @@ async function ensureWorktreeId(gitDirectory: string): Promise<string> {
   // Called under the registry lock so parallel first reservations share one ID.
   const existing = await readWorktreeId(gitDirectory);
   if (existing !== undefined) return existing;
+  // Atomic write so an interrupted first write leaves no torn file behind.
+  // An empty leftover from an older Porto reads back as missing and is replaced.
   const id = randomUUID();
-  try {
-    await writeFile(path.join(gitDirectory, WORKTREE_ID_FILENAME), `${id}\n`, { flag: 'wx' });
-    return id;
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-      const retry = await readWorktreeId(gitDirectory);
-      if (retry !== undefined) return retry;
-    }
-    throw error;
-  }
+  await writeFileAtomically(path.join(gitDirectory, WORKTREE_ID_FILENAME), `${id}\n`);
+  return id;
 }
 
 async function fetchGitContext() {
@@ -66,6 +60,12 @@ async function fetchLinkedWorktreeGitDir(worktreePath: string) {
   const gitLink = await readFile(path.join(worktreePath, '.git'), 'utf8');
   const gitPath = /^gitdir: (?<gitPath>.+)\r?\n?$/u.exec(gitLink)?.groups?.['gitPath'];
   return gitPath ? realpath(path.resolve(worktreePath, gitPath)) : undefined;
+}
+
+function getWorktreeIdFilePaths(commonDirectory: string, gitDirectory: string) {
+  const mainIdPath = path.join(commonDirectory, WORKTREE_ID_FILENAME);
+  const currentIdPath = path.join(gitDirectory, WORKTREE_ID_FILENAME);
+  return currentIdPath === mainIdPath ? [mainIdPath] : [mainIdPath, currentIdPath];
 }
 
 async function listWorktreePaths(commonDirectory: string) {
@@ -100,4 +100,11 @@ async function listWorktreePaths(commonDirectory: string) {
   return worktreePathsById;
 }
 
-export { ensureWorktreeId, fetchGitContext, listWorktreePaths, readWorktreeId };
+export {
+  ensureWorktreeId,
+  fetchGitContext,
+  getWorktreeIdFilePaths,
+  listWorktreePaths,
+  readWorktreeId,
+  WORKTREE_ID_FILENAME,
+};

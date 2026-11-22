@@ -1,14 +1,15 @@
 /* oxlint-disable import/max-dependencies -- Output formatting needs table, dates, fs, locks and domain helpers. */
 import Table from 'cli-table3';
 import { formatDistance } from 'date-fns/formatDistance';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
 
 import type { SlotVars } from './vars';
 
-import { PortoError } from './error';
+import { assertExportPaths } from './export-paths';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
+import { WORKTREE_ID_FILENAME } from './git';
 import { listBusyPorts } from './ports';
 import { checkIsExpired, getRegistryPath } from './registry';
 import { formatLabeledField, maxLineDisplayWidth, truncateMiddle, wrapCommaValue } from './terminal';
@@ -32,67 +33,6 @@ interface StatsInput {
   worktreePath: string;
 }
 
-async function fetchFileIdentity(filePath: string) {
-  try {
-    const { dev, ino } = await stat(filePath, { bigint: true });
-    return `${dev}:${ino}`;
-  } catch (error) {
-    if (!checkIsFileMissing(error)) throw error;
-    return false;
-  }
-}
-
-function normalizePathForComparison(filePath: string) {
-  if (process.platform === 'win32') return filePath.replace(/[ .]+$/u, '').toLowerCase();
-  return process.platform === 'darwin' ? filePath.toLowerCase() : filePath;
-}
-
-async function assertExportPaths(exportPaths: Array<string>, registryPath: string) {
-  if (exportPaths.length === 0) return;
-  const lockPath = `${registryPath}.lock`;
-  const [registryTarget, lockTarget] = await Promise.all([
-    fetchCanonicalPath(registryPath),
-    fetchCanonicalPath(lockPath),
-  ]);
-  const registryPaths = new Set([registryPath, registryTarget].map((filePath) => normalizePathForComparison(filePath)));
-  const lockPaths = [lockPath, lockTarget].map((filePath) => normalizePathForComparison(filePath));
-  const [registryIdentity, lockIdentity, ...exportIdentities] = await Promise.all(
-    [registryTarget, lockTarget, ...exportPaths].map((filePath) => fetchFileIdentity(filePath)),
-  );
-  const hasProtectedPath = exportPaths.some((filePath) => {
-    const normalizedPath = normalizePathForComparison(filePath);
-    return (
-      registryPaths.has(normalizedPath) ||
-      lockPaths.some(
-        (targetPath) => normalizedPath === targetPath || normalizedPath.startsWith(`${targetPath}${path.sep}`),
-      )
-    );
-  });
-  if (
-    hasProtectedPath ||
-    exportIdentities.some((identity) => identity && (identity === registryIdentity || identity === lockIdentity))
-  ) {
-    throw new PortoError('exportInvalid', 'The Porto registry and its lock are reserved.');
-  }
-}
-
-async function assertExportTargetsAreFiles(exportPaths: Array<string>) {
-  await Promise.all(
-    exportPaths.map(async (filePath) => {
-      let targetStat;
-      try {
-        targetStat = await stat(filePath);
-      } catch (error) {
-        if (checkIsFileMissing(error)) return;
-        throw error;
-      }
-      if (targetStat.isDirectory()) {
-        throw new PortoError('exportInvalid', `Export target is a directory: ${filePath}`);
-      }
-    }),
-  );
-}
-
 function clampWidth(termWidth: number, reserved: number, min: number, max: number) {
   return Math.max(min, Math.min(max, termWidth - reserved));
 }
@@ -104,23 +44,6 @@ async function fetchEnvironmentContents(filePath: string) {
     if (!checkIsFileMissing(error)) throw error;
     return '';
   }
-}
-
-async function fetchExportPaths(
-  settings: { env: boolean; envPath: string; jsonPath: false | string },
-  commonDirectory: string,
-) {
-  const jsonPath = settings.jsonPath ? await fetchCanonicalPath(path.resolve(settings.jsonPath)) : undefined;
-  const envPath = settings.env ? await fetchCanonicalPath(path.resolve(settings.envPath)) : undefined;
-  const arePathsEqual =
-    jsonPath !== undefined &&
-    envPath !== undefined &&
-    normalizePathForComparison(jsonPath) === normalizePathForComparison(envPath);
-  if (arePathsEqual) throw new PortoError('exportInvalid', '--json-path and --env-path must use different files.');
-  const exportPaths = [jsonPath, envPath].filter((filePath) => filePath !== undefined);
-  await assertExportPaths(exportPaths, getRegistryPath(commonDirectory));
-  await assertExportTargetsAreFiles(exportPaths);
-  return { envPath, jsonPath };
 }
 
 function formatBusyCell(ports: Array<number>) {
@@ -188,7 +111,11 @@ async function saveEnvironmentFile(filePath: string, vars: SlotVars) {
 
 async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDirectory?: string) {
   const targetPath = await fetchCanonicalPath(filePath);
-  if (commonDirectory !== undefined) await assertExportPaths([targetPath], getRegistryPath(commonDirectory));
+  if (commonDirectory !== undefined) {
+    await assertExportPaths([targetPath], getRegistryPath(commonDirectory), [
+      path.join(commonDirectory, WORKTREE_ID_FILENAME),
+    ]);
+  }
   const unlock = await lockfile.lock(targetPath, {
     realpath: false,
     retries: { factor: 1, maxTimeout: 100, minTimeout: 100, retries: 200 },
@@ -234,26 +161,12 @@ function buildHorizontalTable(
   return table.toString();
 }
 
-function formatStatsVertical(slots: Array<StatsInput>, busyCells: Array<string>, termWidth?: number) {
+function formatStatsVertical(slots: Array<StatsInput>, busyCells: Array<string>, termWidth: number) {
   const now = Date.now();
   return slots
     .map((slot, position) => {
       const busy = busyCells[position] ?? 'unknown';
       const expired = (slot.isExpired ?? checkIsExpired(slot, now)) ? 'yes' : 'no';
-      if (termWidth === undefined) {
-        return [
-          `SLOT ${slot.index}`,
-          `  PORTS: ${slot.firstPort}-${slot.lastPort}`,
-          `  WORKTREE: ${path.basename(slot.worktreePath) || slot.worktreePath}`,
-          `  PATH: ${slot.worktreePath}`,
-          `  LAST USED: ${formatDistance(slot.lastUsedAt, now, { addSuffix: true })}`,
-          `  IDLE (MIN): ${slot.idleTtlMinutes}`,
-          `  KEEP: ${slot.keep ? 'yes' : 'no'}`,
-          `  EXPIRED: ${expired}`,
-          `  VARS: ${formatVarsCell(slot.vars)}`,
-          `  BUSY PORTS: ${busy}`,
-        ].join('\n');
-      }
       return [
         `SLOT ${slot.index}`,
         `  PORTS: ${slot.firstPort}-${slot.lastPort}`,
@@ -274,8 +187,9 @@ async function formatStatsTable(slots: Array<StatsInput>, terminalWidth?: number
   const now = Date.now();
   // A slot whose saved host is gone from this machine must not hide the other rows.
   const busyCells = await Promise.all(slots.map((slot) => fetchBusyCell(slot)));
+  if (slots.length === 0) return 'No slots.';
   const termWidth = terminalWidth ?? getTerminalWidth();
-  if (termWidth === undefined || slots.length === 0) {
+  if (termWidth === undefined) {
     return buildHorizontalTable(slots, busyCells, termWidth, now);
   }
   const horizontal = buildHorizontalTable(slots, busyCells, termWidth, now);
@@ -287,12 +201,6 @@ async function writeReserveJsonFile(filePath: string, vars: SlotVars) {
   await writeFileAtomically(filePath, `${JSON.stringify(vars)}\n`);
 }
 
+export { fetchExportPaths } from './export-paths';
 export { formatEnvironment } from './vars';
-export {
-  fetchExportPaths,
-  formatReserveOutput,
-  formatStatsTable,
-  formatTable,
-  updateEnvironmentFile,
-  writeReserveJsonFile,
-};
+export { formatReserveOutput, formatStatsTable, formatTable, updateEnvironmentFile, writeReserveJsonFile };

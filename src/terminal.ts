@@ -107,7 +107,8 @@ function wrapCommaValue(value: string, maxWidth: number) {
   for (const part of value.split(', ')) {
     const candidate = current === '' ? part : `${current}, ${part}`;
     if (current !== '' && displayWidth(candidate) > maxWidth) {
-      pushWrappedPart(lines, current, maxWidth);
+      // Keep the separator at the end of the broken line.
+      pushWrappedPart(lines, `${current},`, maxWidth);
       current = part;
     } else {
       current = candidate;

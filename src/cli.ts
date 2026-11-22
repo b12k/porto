@@ -9,7 +9,7 @@ import type { PortoConfig } from './config';
 import type { PortSlot } from './index';
 
 import { fetchConfig, name, parseConfig, resolveOutputSettings, version } from './config';
-import { fetchGitContext } from './git';
+import { fetchGitContext, getWorktreeIdFilePaths } from './git';
 import {
   BusyPortsError,
   cleanupSlots,
@@ -58,17 +58,18 @@ async function runHook(hookName: string, hook: () => Promise<void> | void) {
 }
 
 function findBusyPortsError(error: unknown): BusyPortsError | undefined {
+  // Shallow check only: the partial-release path already attaches the
+  // BusyPortsError as a direct member or immediate cause. Deep recursion
+  // Risks overflowing the stack on cyclic cause chains from user hooks.
   if (error instanceof BusyPortsError) return error;
   if (error instanceof AggregateError) {
     for (const inner of error.errors) {
-      const found = findBusyPortsError(inner);
-      if (found) return found;
+      if (inner instanceof BusyPortsError) return inner;
+      if (inner instanceof Error && inner.cause instanceof BusyPortsError) return inner.cause;
     }
     return undefined;
   }
-  if (error instanceof Error && 'cause' in error && error.cause !== undefined) {
-    return findBusyPortsError(error.cause);
-  }
+  if (error instanceof Error && error.cause instanceof BusyPortsError) return error.cause;
   return undefined;
 }
 
@@ -90,7 +91,11 @@ function writeOutput(contents: string) {
 async function handleReserve(flags: ReserveFlags, command: Command) {
   const git = await fetchGitContext();
   const { json, onReserved, vars: resolvedVars, ...settings } = await fetchSettings(flags, command, git.worktreePath);
-  const { envPath, jsonPath } = await fetchExportPaths(resolveOutputSettings(settings), git.commonDirectory);
+  const { envPath, jsonPath } = await fetchExportPaths(
+    resolveOutputSettings(settings),
+    git.commonDirectory,
+    getWorktreeIdFilePaths(git.commonDirectory, git.gitDirectory),
+  );
   // Values that cannot be rendered as env lines must fail before the registry is written.
   const needsEnvFormat = envPath !== undefined || (!(settings.silent ?? false) && !json && resolvedVars !== undefined);
   // Registry save happens before JSON/env exports under the same lock.

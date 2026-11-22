@@ -46,7 +46,9 @@ function isAddressUnavailableError(error: unknown) {
     (error.code === 'EADDRNOTAVAIL' ||
       error.code === 'EAFNOSUPPORT' ||
       error.code === 'ENETUNREACH' ||
-      error.code === 'EHOSTUNREACH')
+      error.code === 'EHOSTUNREACH' ||
+      error.code === 'ENOTFOUND' ||
+      error.code === 'EAI_AGAIN')
   );
 }
 
