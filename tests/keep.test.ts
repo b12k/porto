@@ -5,12 +5,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { fetchFreeRange } from './fixture';
 
 const execFileAsync = promisify(execFile);
 const apiUrl = new URL('../src/index.ts', import.meta.url).href;
+const cliPath = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 const tsxUrl = import.meta.resolve('tsx');
 const servers: Array<ReturnType<typeof createServer>> = [];
 let directoryPath: string;
@@ -69,6 +71,15 @@ async function runApi(source: string, cwd = repositoryPath) {
     cwd,
   });
   return stdout;
+}
+
+function runCli(args: Array<string>, cwd = repositoryPath) {
+  return execFileAsync(process.execPath, ['--import', tsxUrl, '--', cliPath, ...args], { cwd });
+}
+
+async function runCliJson(args: Array<string>, cwd = repositoryPath) {
+  const { stdout } = await runCli(args, cwd);
+  return JSON.parse(stdout) as unknown;
 }
 
 beforeEach(async () => {
@@ -185,6 +196,69 @@ it('reenables idle cleanup when keep is explicitly false', async () => {
   expect(
     JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
   ).toEqual([]);
+});
+
+it('keeps slots selected by a keep predicate through idle cleanup', async () => {
+  const stdout = await runApi(`
+    const seen = [];
+    await reserve({
+      start: ${start}, size: 1, keep: (slot) => { seen.push({ index: slot.index, vars: slot.vars }); return slot.index === 0; },
+    });
+    process.stdout.write(JSON.stringify(seen));
+  `);
+  expect(JSON.parse(stdout)).toEqual([{ index: 0, vars: { SLOT: 0 } }]);
+  await expireRecords();
+  expect(
+    JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
+  ).toMatchObject([{ index: 0, isExpired: false, keep: true }]);
+});
+
+it('maps variables before evaluating the keep predicate', async () => {
+  const stdout = await runApi(`
+    let keptVars;
+    await reserve({
+      start: ${start}, size: 2, vars: ['API_PORT'],
+      keep: (slot) => { keptVars = slot.vars; return slot.vars.API_PORT === ${start}; },
+    });
+    process.stdout.write(JSON.stringify(keptVars));
+  `);
+  expect(JSON.parse(stdout)).toEqual({ API_PORT: start });
+  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await getAllSlots()));'))).toMatchObject([
+    { index: 0, keep: true, vars: { API_PORT: start } },
+  ]);
+});
+
+it('evaluates the keep predicate per slot on every reserve', async () => {
+  await runApi(`await reserve({ start: ${start}, size: 1, keep: () => false });`);
+  const worktreePath = await createWorktree();
+  await runApi(`await reserve({ start: ${start}, size: 1, keep: (slot) => slot.index === 1 });`, worktreePath);
+  expect(JSON.parse(await runApi('process.stdout.write(JSON.stringify(await getAllSlots()));'))).toMatchObject([
+    { index: 0, keep: false },
+    { index: 1, keep: true },
+  ]);
+  await runApi(`await reserve({ start: ${start}, size: 1, keep: () => true });`);
+  await expireRecords();
+  expect(
+    JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
+  ).toHaveLength(2);
+  await runApi(`await reserve({ start: ${start}, size: 1, keep: () => false });`);
+  await expireRecords();
+  expect(
+    JSON.parse(await runApi('await cleanupSlots(); process.stdout.write(JSON.stringify(await getAllSlots()));')),
+  ).toMatchObject([{ index: 1, keep: true }]);
+});
+
+it('lets a configured keep predicate decide and lets CLI flags override it', async () => {
+  await writeFile(
+    path.join(repositoryPath, 'porto.config.ts'),
+    `export default { start: ${start}, size: 1, keep: (slot) => slot.index === 0 };`,
+  );
+  await runCli(['reserve']);
+  expect(await runCliJson(['show', '--all', '--json'])).toMatchObject([{ index: 0, keep: true }]);
+  await runCli(['reserve', '--no-keep']);
+  expect(await runCliJson(['show', '--all', '--json'])).toMatchObject([{ index: 0, keep: false }]);
+  await runCli(['reserve', '--keep']);
+  expect(await runCliJson(['show', '--all', '--json'])).toMatchObject([{ index: 0, keep: true }]);
 });
 
 it('requires free ports for explicit release even when a reservation is kept', async () => {

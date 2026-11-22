@@ -125,4 +125,5 @@ export { PortoError } from './error';
 export type { PortSlot } from './ports';
 export { reserve } from './reserve';
 export type { ReserveOptions } from './reserve';
+export type { KeepPredicate } from './schemas';
 export type { VarFactory, Vars } from './vars';

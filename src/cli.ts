@@ -126,12 +126,12 @@ cli
     if (flags.all && slotIndex !== undefined) throw new PortoError('slotSelectionInvalid');
     if (flags.all) {
       const slots = await getAllSlots();
-      writeOutput(flags.json ? JSON.stringify(slots) : formatStatsTable(slots));
+      writeOutput(flags.json ? JSON.stringify(slots) : await formatStatsTable(slots));
       return;
     }
     const slot = await getSlot(slotIndex);
     if (slot === undefined) throw new PortoError('reservationNotFound');
-    writeOutput(flags.json ? JSON.stringify(slot) : String(slot.index));
+    writeOutput(flags.json ? JSON.stringify(slot) : await formatStatsTable([slot]));
   });
 
 cli

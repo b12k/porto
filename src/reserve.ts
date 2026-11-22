@@ -3,8 +3,9 @@ import type { z } from 'zod';
 import { compact, range, union } from 'es-toolkit';
 
 import type { PortoConfig } from './config';
+import type { PortSlot } from './ports';
 import type { Registry, ReservationRecord } from './registry';
-import type { OPTIONS_SCHEMA } from './schemas';
+import type { KeepPredicate, OPTIONS_SCHEMA } from './schemas';
 import type { Vars, VarsResult } from './vars';
 
 import { BusyPortsError } from './busy-ports-error';
@@ -39,8 +40,8 @@ async function allocateRecord(registry: Registry, options: Omit<ReservationRecor
   throw new PortoError('slotUnavailable');
 }
 
-function checkIsExpired(record: Pick<ReservationRecord, 'expiresAt'>, now: number) {
-  return record.expiresAt !== null && now > Date.parse(record.expiresAt);
+function checkIsExpired(record: Pick<ReservationRecord, 'expiresAt' | 'keep'>, now: number) {
+  return !record.keep && now > Date.parse(record.expiresAt);
 }
 
 function issuePorts(record: ReservationRecord, index: number, entries: Vars) {
@@ -48,16 +49,6 @@ function issuePorts(record: ReservationRecord, index: number, entries: Vars) {
   // SLOT is the default only when no other variables are mapped; otherwise map it explicitly.
   record.vars = entries.length === 0 ? { SLOT: index } : mapSlotToVars({ firstPort, index }, entries);
   record.ports = union(record.ports, range(firstPort, firstPort + entries.length));
-  return buildSlot(record, index);
-}
-
-async function releaseRecord(registry: Registry, index: number, record: ReservationRecord, force = false) {
-  if (!force) {
-    const busyPorts = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
-    if (busyPorts.length > 0) throw new BusyPortsError(busyPorts.map((port) => ({ port, slot: index })));
-  }
-  // oxlint-disable-next-line typescript/no-dynamic-delete -- Slot indices are dynamic by design.
-  delete registry.slots[index];
   return buildSlot(record, index);
 }
 
@@ -80,6 +71,17 @@ async function removeExpiredRecords(registry: Registry, now: number) {
   return expiredSlots;
 }
 
+async function resolveKeep(keep: boolean | KeepPredicate | undefined, slot: PortSlot, fallback: () => boolean) {
+  if (typeof keep === 'function') {
+    const kept = await keep(slot);
+    if (typeof kept !== 'boolean') {
+      throw new PortoError('optionsInvalid', 'keep: keep predicate must return a boolean.');
+    }
+    return kept;
+  }
+  return keep ?? fallback();
+}
+
 function commitReservation(
   { commonDirectory, worktreeId, worktreePath }: Awaited<ReturnType<typeof fetchGitContext>>,
   { vars = [], ...options }: Omit<PortoConfig, 'onReleased' | 'onReserved'>,
@@ -100,30 +102,50 @@ function commitReservation(
     const existingIndex = existingEntry === undefined ? -1 : existingEntry.index;
     const existingRecord = existingEntry?.record;
     const lastUsedAt = new Date(now).toISOString();
-    const isKept = keep ?? existingRecord?.keep ?? false;
-    const settings = {
+    const previousKeep = existingRecord?.keep ?? false;
+    const baseSettings = {
       env,
       envFile,
-      // oxlint-disable-next-line unicorn/no-null -- JSON uses null for a slot with no expiry.
-      expiresAt: isKept ? null : new Date(now + idleTtlMinutes * 60_000).toISOString(),
       host: host ?? existingRecord?.host,
       idleTtlMinutes,
       jsonFile,
-      keep: isKept,
       lastUsedAt,
       silent,
       worktreePath,
     };
     if (existingRecord) {
-      Object.assign(existingRecord, settings);
+      // Guard the slot being reserved against idle cleanup; the final value is resolved below.
+      Object.assign(existingRecord, baseSettings, {
+        expiresAt: new Date(now + idleTtlMinutes * 60_000).toISOString(),
+        keep: true,
+      });
     }
     await removeExpiredRecords(registry, now);
     const { index, record } = existingRecord
       ? { index: existingIndex, record: existingRecord }
-      : await allocateRecord(registry, { ...settings, ports: [], worktreeId });
+      : await allocateRecord(registry, {
+          ...baseSettings,
+          expiresAt: new Date(now + idleTtlMinutes * 60_000).toISOString(),
+          keep: false,
+          ports: [],
+          worktreeId,
+        });
     // A failed factory must leave the registry untouched.
-    return issuePorts(record, index, vars);
+    const slot = issuePorts(record, index, vars);
+    // Keep is resolved after variables are mapped so predicates can use slot.vars.
+    record.keep = await resolveKeep(keep, slot, () => previousKeep);
+    return slot;
   });
+}
+
+async function releaseRecord(registry: Registry, index: number, record: ReservationRecord, force = false) {
+  if (!force) {
+    const busyPorts = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
+    if (busyPorts.length > 0) throw new BusyPortsError(busyPorts.map((port) => ({ port, slot: index })));
+  }
+  // oxlint-disable-next-line typescript/no-dynamic-delete -- Slot indices are dynamic by design.
+  delete registry.slots[index];
+  return buildSlot(record, index);
 }
 
 async function reserve<const Entries extends Vars>(
@@ -136,6 +158,5 @@ async function reserve(options: ReserveOptions = {}) {
   const git = await fetchGitContext();
   return commitReservation(git, { ...parseOptions(optionsWithoutVars), vars });
 }
-
 export { checkIsExpired, commitReservation, releaseRecord, removeExpiredRecords, reserve };
 export type { ReserveOptions };

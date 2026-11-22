@@ -85,7 +85,6 @@ it('stores resolved settings and variables and reads them without evaluating the
     silent: true,
     vars: { API_PORT: start + 1, API_URL: `http://localhost:${start + 1}`, CLIENT_PORT: start },
   });
-  if (record.expiresAt === null) throw new Error('Expected an expiry time for this slot.');
   expect(Date.parse(record.expiresAt) - Date.parse(record.lastUsedAt)).toBe(120_000);
   expect(Object.hasOwn(record.vars, '__proto__')).toBe(true);
   expect(record).not.toHaveProperty('getPort');
@@ -130,15 +129,15 @@ it('stores range settings once and cleans up using the saved slot expiry', async
   }
 });
 
-it('stores null expiry for kept slots and refreshes it when idle cleanup is enabled', async () => {
+it('stores expiry for kept slots and skips them during idle cleanup', async () => {
   const args = ['reserve', '--start', String(start), '--size=1'];
   await runCli([...args, '--keep']);
   const keptSlot = await readRecord();
-  expect(keptSlot.expiresAt).toBeNull();
+  expect(keptSlot).toMatchObject({ keep: true });
+  expect(typeof keptSlot.expiresAt).toBe('string');
   expect(await runApi('console.log(JSON.stringify(await cleanupSlots()));')).toEqual([]);
   await runCli([...args, '--no-keep', '--idle=3']);
   const idleSlot = await readRecord();
-  if (idleSlot.expiresAt === null) throw new Error('Expected an expiry time after --no-keep.');
   expect(Date.parse(idleSlot.expiresAt) - Date.parse(idleSlot.lastUsedAt)).toBe(180_000);
 });
 

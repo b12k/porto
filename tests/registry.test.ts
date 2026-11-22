@@ -107,7 +107,7 @@ it.each(['keep', 'ports', 'worktreeId'])('rejects a slot missing its required %s
   await expect(updateRegistry(directoryPath, (registry) => registry)).rejects.toBeInstanceOf(PortoError);
 });
 
-it.each([{ firstPort: 19_999 }, { lastPort: 20_002 }, { vars: { 'BAD-NAME': 1000, SLOT: 0 } }, { keep: true }])(
+it.each([{ firstPort: 19_999 }, { lastPort: 20_002 }, { vars: { 'BAD-NAME': 1000, SLOT: 0 } }])(
   'rejects inconsistent saved slot fields: %j',
   async (fields) => {
     const record = { ...buildRecord(), ...fields };

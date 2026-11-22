@@ -10,6 +10,10 @@ const SLOT_HOOK_SCHEMA = z.custom<(slot: PortSlot, ports: Array<number>) => Prom
   (hook) => typeof hook === 'function',
 );
 
+type KeepPredicate = (slot: PortSlot) => boolean | Promise<boolean>;
+
+const KEEP_SCHEMA = z.custom<KeepPredicate>((value) => typeof value === 'function');
+
 const HOOKS_SCHEMA = z.object({ onReleased: SLOT_HOOK_SCHEMA, onReserved: SLOT_HOOK_SCHEMA });
 
 const OUTPUT_OPTIONS_SCHEMA = z.object({
@@ -23,7 +27,7 @@ const PORT_SCHEMA = z.int().min(1).max(65_535);
 const OPTIONS_SCHEMA = z.object({
   host: z.string().trim().min(1).optional(),
   idleTtlMinutes: z.number().positive(),
-  keep: z.boolean().optional(),
+  keep: z.union([z.boolean(), KEEP_SCHEMA]).optional(),
   size: PORT_SCHEMA,
   start: PORT_SCHEMA,
 });
@@ -32,7 +36,7 @@ const INPUT_OPTIONS_SCHEMA = OPTIONS_SCHEMA.partial();
 const RECORD_SCHEMA = z
   .object({
     ...OUTPUT_OPTIONS_SCHEMA.shape,
-    expiresAt: z.iso.datetime().nullable(),
+    expiresAt: z.iso.datetime(),
     firstPort: PORT_SCHEMA,
     host: OPTIONS_SCHEMA.shape.host,
     idleTtlMinutes: OPTIONS_SCHEMA.shape.idleTtlMinutes,
@@ -49,10 +53,6 @@ const RECORD_SCHEMA = z
   .refine((record) => record.ports.every((port) => port >= record.firstPort && port <= record.lastPort), {
     message: 'Assigned ports must belong to the slot.',
     path: ['ports'],
-  })
-  .refine((record) => record.keep === (record.expiresAt === null), {
-    message: 'Kept slots must have no expiry time.',
-    path: ['expiresAt'],
   });
 
 type ReservationRecord = z.output<typeof RECORD_SCHEMA>;
@@ -99,4 +99,4 @@ function parseOptions(options: unknown) {
 }
 
 export { HOOKS_SCHEMA, OPTIONS_SCHEMA, OUTPUT_OPTIONS_SCHEMA, parseOptions, REGISTRY_SCHEMA };
-export type { Registry, ReservationRecord };
+export type { KeepPredicate, Registry, ReservationRecord };
