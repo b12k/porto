@@ -9,7 +9,7 @@ import type { PortoConfig } from './config';
 import type { PortSlot } from './index';
 
 import { fetchConfig, name, parseConfig, resolveOutputSettings, version } from './config';
-import { fetchGitContext, getWorktreeIdFilePaths } from './git';
+import { fetchGitContext } from './git';
 import {
   BusyPortsError,
   cleanupSlots,
@@ -91,11 +91,7 @@ function writeOutput(contents: string) {
 async function handleReserve(flags: ReserveFlags, command: Command) {
   const git = await fetchGitContext();
   const { json, onReserved, vars: resolvedVars, ...settings } = await fetchSettings(flags, command, git.worktreePath);
-  const { envPath, jsonPath } = await fetchExportPaths(
-    resolveOutputSettings(settings),
-    git.commonDirectory,
-    getWorktreeIdFilePaths(git.commonDirectory, git.gitDirectory),
-  );
+  const { envPath, jsonPath } = await fetchExportPaths(resolveOutputSettings(settings), git.commonDirectory);
   // Values that cannot be rendered as env lines must fail before the registry is written.
   const needsEnvFormat = envPath !== undefined || (!(settings.silent ?? false) && !json && resolvedVars !== undefined);
   // Registry save happens before JSON/env exports under the same lock.

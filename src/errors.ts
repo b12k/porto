@@ -7,6 +7,10 @@ export const ERRORS_BY_KEY = {
     instruction: 'The registry change is already saved. Check the hook in your config.',
     message: 'Lifecycle hook failed.',
   },
+  hostUnresolved: {
+    instruction: 'Check the saved host or release with --force.',
+    message: 'Cannot verify whether ports are in use.',
+  },
   mappingInvalid: {
     instruction: 'Use unique variable names, valid callbacks, and a slot large enough for all entries.',
     message: 'Invalid variables.',

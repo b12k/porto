@@ -3,11 +3,13 @@ import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { fetchFreeRange } from './fixture';
 
 const execFileAsync = promisify(execFile);
+const cliPath = path.resolve(import.meta.dirname, '../src/cli.ts');
 const reserveUrl = new URL('../src/reserve.ts', import.meta.url).href;
 const gitUrl = new URL('../src/git.ts', import.meta.url).href;
 const outputUrl = new URL('../src/output.ts', import.meta.url).href;
@@ -19,6 +21,33 @@ let start: number;
 
 function runGit(args: Array<string>, cwd = repositoryPath) {
   return execFileAsync('git', args, { cwd });
+}
+
+function runReserve(args: Array<string>, cwd: string, delayMs: string) {
+  return execFileAsync(process.execPath, ['--import', tsxPath, '--', cliPath, ...args], {
+    cwd,
+    env: { ...process.env, PORTO_TEST_EXPORT_DELAY_MS: delayMs },
+  });
+}
+
+async function waitForFirstSlot(registryPath: string, deadline: number): Promise<void> {
+  let saved = false;
+  try {
+    const snapshot: unknown = JSON.parse(await readFile(registryPath, 'utf8'));
+    saved =
+      typeof snapshot === 'object' &&
+      snapshot !== null &&
+      'slots' in snapshot &&
+      typeof snapshot.slots === 'object' &&
+      snapshot.slots !== null &&
+      '0' in snapshot.slots;
+  } catch {
+    // The registry file does not exist yet.
+  }
+  if (saved) return;
+  if (Date.now() > deadline) throw new Error('Timed out waiting for the first reservation.');
+  await setTimeout(50);
+  return waitForFirstSlot(registryPath, deadline);
 }
 
 beforeEach(async () => {
@@ -100,6 +129,31 @@ it('keeps the registry and JSON export consistent under overlapping reserves', a
     s1: { LABEL: 'first' },
     s2: { LABEL: 'second' },
   });
+  const registry: unknown = JSON.parse(
+    await readFile(path.join(repositoryPath, '.git', 'porto-registry.json'), 'utf8'),
+  );
+  expect(registry).toMatchObject({ slots: { 0: { vars: { LABEL: 'first' } }, 1: { vars: { LABEL: 'second' } } } });
+});
+
+it('keeps the registry and JSON export consistent across overlapping CLI reserves', async () => {
+  const worktreePath = path.join(directoryPath, 'other');
+  await runGit(['worktree', 'add', '--detach', worktreePath]);
+  const jsonName = path.join(repositoryPath, 'ports.json');
+  function runReserveArgs(label: string): Array<string> {
+    return ['reserve', '--start', String(start), '--size', '2', '--vars', `LABEL=${label}`, '--json-path', jsonName];
+  }
+  const first = runReserve(runReserveArgs('first'), repositoryPath, '3000');
+  // Wait until the first reservation is saved so the second one overlaps it
+  // Inside the JSON export window while the registry lock is still held.
+  await waitForFirstSlot(path.join(repositoryPath, '.git', 'porto-registry.json'), Date.now() + 10_000);
+  const second = runReserve(runReserveArgs('second'), worktreePath, '0');
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  expect(firstResult.stdout).toContain('LABEL=first');
+  expect(secondResult.stdout).toContain('LABEL=second');
+  const file: unknown = JSON.parse(await readFile(jsonName, 'utf8'));
+  // The last completed CLI reservation wins the shared file; a stale export
+  // From the first process must not survive after the second one.
+  expect(file).toEqual({ LABEL: 'second' });
   const registry: unknown = JSON.parse(
     await readFile(path.join(repositoryPath, '.git', 'porto-registry.json'), 'utf8'),
   );

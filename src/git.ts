@@ -62,12 +62,6 @@ async function fetchLinkedWorktreeGitDir(worktreePath: string) {
   return gitPath ? realpath(path.resolve(worktreePath, gitPath)) : undefined;
 }
 
-function getWorktreeIdFilePaths(commonDirectory: string, gitDirectory: string) {
-  const mainIdPath = path.join(commonDirectory, WORKTREE_ID_FILENAME);
-  const currentIdPath = path.join(gitDirectory, WORKTREE_ID_FILENAME);
-  return currentIdPath === mainIdPath ? [mainIdPath] : [mainIdPath, currentIdPath];
-}
-
 async function listWorktreePaths(commonDirectory: string) {
   const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain', '-z']);
   const worktreePathsById = new Map<string, string>();
@@ -100,11 +94,4 @@ async function listWorktreePaths(commonDirectory: string) {
   return worktreePathsById;
 }
 
-export {
-  ensureWorktreeId,
-  fetchGitContext,
-  getWorktreeIdFilePaths,
-  listWorktreePaths,
-  readWorktreeId,
-  WORKTREE_ID_FILENAME,
-};
+export { ensureWorktreeId, fetchGitContext, listWorktreePaths, readWorktreeId };

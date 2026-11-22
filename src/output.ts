@@ -3,15 +3,15 @@ import Table from 'cli-table3';
 import { formatDistance } from 'date-fns/formatDistance';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 import lockfile from 'proper-lockfile';
 
 import type { SlotVars } from './vars';
 
-import { assertExportPaths } from './export-paths';
+import { assertExportPaths, assertLockPathUsable } from './export-paths';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
-import { WORKTREE_ID_FILENAME } from './git';
 import { listBusyPorts } from './ports';
-import { checkIsExpired, getRegistryPath } from './registry';
+import { checkIsExpired } from './registry';
 import { formatLabeledField, maxLineDisplayWidth, truncateMiddle, wrapCommaValue } from './terminal';
 import { formatEnvironment, formatEnvironmentValue } from './vars';
 
@@ -112,10 +112,9 @@ async function saveEnvironmentFile(filePath: string, vars: SlotVars) {
 async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDirectory?: string) {
   const targetPath = await fetchCanonicalPath(filePath);
   if (commonDirectory !== undefined) {
-    await assertExportPaths([targetPath], getRegistryPath(commonDirectory), [
-      path.join(commonDirectory, WORKTREE_ID_FILENAME),
-    ]);
+    await assertExportPaths([targetPath], commonDirectory);
   }
+  await assertLockPathUsable(await fetchCanonicalPath(`${targetPath}.lock`));
   const unlock = await lockfile.lock(targetPath, {
     realpath: false,
     retries: { factor: 1, maxTimeout: 100, minTimeout: 100, retries: 200 },
@@ -198,6 +197,10 @@ async function formatStatsTable(slots: Array<StatsInput>, terminalWidth?: number
 }
 
 async function writeReserveJsonFile(filePath: string, vars: SlotVars) {
+  // Test-only hook for the export-race test: hold the registry lock inside
+  // The export window while the test starts the overlapping reservation.
+  const delayMs = Number(process.env['PORTO_TEST_EXPORT_DELAY_MS'] ?? 0);
+  if (delayMs > 0) await setTimeout(delayMs);
   await writeFileAtomically(filePath, `${JSON.stringify(vars)}\n`);
 }
 

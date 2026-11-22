@@ -17,7 +17,7 @@ import {
   slotEntries,
   updateRegistry,
 } from './registry';
-import { releaseRecord, removeExpiredRecords } from './reserve';
+import { isAddressUnavailableError, releaseRecord, removeExpiredRecords } from './reserve';
 
 type ReservationStats = Omit<ReservationRecord, 'worktreeId'> & { index: number; isExpired: boolean };
 
@@ -87,22 +87,37 @@ async function getSlot(slotIndex?: number) {
 
 async function releaseAllSlots(force = false) {
   const { commonDirectory } = await fetchGitContext();
-  const { busyPorts, releasedSlots } = await updateRegistry(commonDirectory, async (registry) => {
+  const {
+    busyPorts,
+    releasedSlots,
+    skippedSlots: unresolvedSlots,
+  } = await updateRegistry(commonDirectory, async (registry) => {
     const freedSlots: Array<PortSlot> = [];
     const occupiedPorts: Array<BusyPort> = [];
+    const skippedSlots: Array<number> = [];
     for (const { index, record } of slotEntries(registry.slots)) {
       try {
         // Free every releasable slot instead of failing on the first busy one.
         // oxlint-disable-next-line no-await-in-loop
         freedSlots.push(await releaseRecord(registry, index, record, force));
       } catch (error) {
-        if (!(error instanceof BusyPortsError)) throw error;
-        occupiedPorts.push(...error.ports);
+        if (error instanceof BusyPortsError) {
+          occupiedPorts.push(...error.ports);
+        } else if (isAddressUnavailableError(error)) {
+          // A slot whose saved host cannot be resolved must not cancel the
+          // Verified releases: keep it and report its number afterwards.
+          skippedSlots.push(index);
+        } else {
+          throw error;
+        }
       }
     }
-    return { busyPorts: occupiedPorts, releasedSlots: freedSlots };
+    return { busyPorts: occupiedPorts, releasedSlots: freedSlots, skippedSlots };
   });
   if (busyPorts.length > 0) throw new BusyPortsError(busyPorts, releasedSlots);
+  if (unresolvedSlots.length > 0) {
+    throw new PortoError('hostUnresolved', `Slots left in place: ${unresolvedSlots.join(', ')}`);
+  }
   return releasedSlots;
 }
 
