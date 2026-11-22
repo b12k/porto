@@ -8,7 +8,12 @@ import { VAR_VALUES_SCHEMA } from './vars';
 
 const SLOT_HOOK_SCHEMA = z.custom<(slot: PortSlot) => Promise<void> | void>((hook) => typeof hook === 'function');
 
-type KeepPredicate = (slot: PortSlot) => boolean | Promise<boolean>;
+type KeepPredicate = (slot: KeepSlot) => boolean | Promise<boolean>;
+
+type KeepSlot = Readonly<Omit<PortSlot, 'ports' | 'vars'>> & {
+  readonly ports: ReadonlyArray<number>;
+  readonly vars: Readonly<PortSlot['vars']>;
+};
 
 const KEEP_SCHEMA = z.custom<KeepPredicate>((value) => typeof value === 'function');
 
@@ -16,8 +21,8 @@ const HOOKS_SCHEMA = z.object({ onReleased: SLOT_HOOK_SCHEMA, onReserved: SLOT_H
 
 const OUTPUT_OPTIONS_SCHEMA = z.object({
   env: z.boolean(),
-  envFile: z.string().min(1),
-  jsonFile: z.union([z.literal(false), z.string().min(1)]),
+  envPath: z.string().min(1),
+  jsonPath: z.union([z.literal(false), z.string().min(1)]),
   silent: z.boolean(),
 });
 
@@ -97,4 +102,4 @@ function parseOptions(options: unknown) {
 }
 
 export { HOOKS_SCHEMA, OPTIONS_SCHEMA, OUTPUT_OPTIONS_SCHEMA, parseOptions, REGISTRY_SCHEMA };
-export type { KeepPredicate, Registry, ReservationRecord };
+export type { KeepPredicate, KeepSlot, Registry, ReservationRecord };

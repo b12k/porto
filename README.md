@@ -76,8 +76,8 @@ One setting, three ways to set it. Precedence: CLI flag → config file → save
 | Keep           | `--keep` / `--no-keep`                  | `keep`           | Off for new slots | Keep the slot during idle cleanup. Use `keep: (slot) => slot.index === 0` to decide per slot. Omit to keep the current value. |
 | Variables      | `--vars <vars>` / `--no-vars`           | `vars`           | Unset             | One port per entry. `--no-vars` clears the configured list.                                                                   |
 | Env output     | `--env` / `--no-env`                    | `env`            | `false`           | Write variables and `SLOT` to an env file.                                                                                    |
-| Env file       | `--env-file <file>`                     | `envFile`        | `.env`            | An explicit path enables `env` unless you set `env: false`.                                                                   |
-| JSON file      | `--json-file <file>` / `--no-json-file` | `jsonFile`       | `false`           | Save the mapped variables as JSON. `SLOT` alone when no `vars` are given.                                                     |
+| Env file       | `--env-path <file>`                     | `envPath`        | `.env`            | An explicit path enables `env` unless you set `env: false`.                                                                   |
+| JSON file      | `--json-path <file>` / `--no-json-path` | `jsonPath`       | `false`           | Save the mapped variables as JSON. `SLOT` alone when no `vars` are given.                                                     |
 | Silent         | `--silent` / `--no-silent`              | `silent`         | `false`           | Hide the `reserve` result on stdout. Files are still written.                                                                 |
 
 CLI-only flags: `--json` (print JSON to stdout, also works with `show`).
@@ -93,7 +93,7 @@ Use `;` to move to the next port and `|` to share the current port. Use `NAME` f
 ##### Write to files
 
 ```sh
-pnpm porto --vars "CLIENT_PORT|HOST_URL=http://localhost:{{port}};API_PORT" --env-file .env.local --json-file env.json
+pnpm porto --vars "CLIENT_PORT|HOST_URL=http://localhost:{{port}};API_PORT" --env-path .env.local --json-path env.json
 ```
 
 If the first slot is free, Porto writes these files. `SLOT` is included only when no other variables are given — otherwise map it explicitly as shown above.
@@ -145,8 +145,8 @@ export default defineConfig({
   idleTtlMinutes: 60,
   keep: false,
   env: true,
-  envFile: '.env.local',
-  jsonFile: 'ports.json',
+  envPath: '.env.local',
+  jsonPath: 'ports.json',
   silent: false,
   vars: [
     'PORT',

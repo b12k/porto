@@ -219,8 +219,8 @@ it('respects an explicitly mapped SLOT variable instead of forcing the slot inde
     String(start),
     '--size=3',
     '--vars=SLOT=wrong|API_PORT',
-    '--env-file=.env.local',
-    '--json-file=env.json',
+    '--env-path=.env.local',
+    '--json-path=env.json',
   ];
   const server = createServer();
   server.listen({ host: '127.0.0.1', port: start });

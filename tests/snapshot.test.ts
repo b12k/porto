@@ -60,7 +60,7 @@ it('stores resolved settings and variables and reads them without evaluating the
     `import { appendFileSync } from 'node:fs';
      export default {
        start: ${start}, size: 3, host: '127.0.0.1', idleTtlMinutes: 2, keep: false,
-       env: true, envFile: '.env.local', jsonFile: 'env.json', silent: true,
+       env: true, envPath: '.env.local', jsonPath: 'env.json', silent: true,
        vars: ['CLIENT_PORT', (port, _slot) => {
          appendFileSync('factories.txt', 'called\\n');
          return { API_PORT: port, API_URL: 'http://localhost:' + port, ['__proto__']: port };
@@ -74,11 +74,11 @@ it('stores resolved settings and variables and reads them without evaluating the
   const record = await readRecord();
   expect(record).toMatchObject({
     env: true,
-    envFile: path.join(directoryPath, '.env.local'),
+    envPath: path.join(directoryPath, '.env.local'),
     firstPort: start,
     host: '127.0.0.1',
     idleTtlMinutes: 2,
-    jsonFile: path.join(directoryPath, 'env.json'),
+    jsonPath: path.join(directoryPath, 'env.json'),
     keep: false,
     lastPort: start + 2,
     ports: [start, start + 1],

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { readFile, realpath } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -7,9 +8,34 @@ import { PortoError } from './error';
 import { checkIsFileMissing } from './files';
 
 const execFileAsync = promisify(execFile);
+const WORKTREE_ID_FILENAME = 'porto-worktree-id';
 
-function getWorktreeId(commonDirectory: string, gitDirectory: string) {
-  return path.relative(commonDirectory, gitDirectory).split(path.sep).join('/') || '.';
+async function readWorktreeId(gitDirectory: string): Promise<string | undefined> {
+  try {
+    const contents = await readFile(path.join(gitDirectory, WORKTREE_ID_FILENAME), 'utf8');
+    const id = contents.trim();
+    return id === '' ? undefined : id;
+  } catch (error) {
+    if (checkIsFileMissing(error)) return undefined;
+    throw error;
+  }
+}
+
+async function ensureWorktreeId(gitDirectory: string): Promise<string> {
+  // Called under the registry lock so parallel first reservations share one ID.
+  const existing = await readWorktreeId(gitDirectory);
+  if (existing !== undefined) return existing;
+  const id = randomUUID();
+  try {
+    await writeFile(path.join(gitDirectory, WORKTREE_ID_FILENAME), `${id}\n`, { flag: 'wx' });
+    return id;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
+      const retry = await readWorktreeId(gitDirectory);
+      if (retry !== undefined) return retry;
+    }
+    throw error;
+  }
 }
 
 async function fetchGitContext() {
@@ -29,16 +55,17 @@ async function fetchGitContext() {
       realpath(commonPath),
       realpath(gitPath),
     ]);
-    return { commonDirectory, worktreeId: getWorktreeId(commonDirectory, gitDirectory), worktreePath };
+    const worktreeId = await readWorktreeId(gitDirectory);
+    return { commonDirectory, gitDirectory, worktreeId, worktreePath };
   } catch (error) {
     throw new PortoError('worktreeNotFound', undefined, { cause: error });
   }
 }
 
-async function fetchLinkedWorktreeId(commonDirectory: string, worktreePath: string) {
+async function fetchLinkedWorktreeGitDir(worktreePath: string) {
   const gitLink = await readFile(path.join(worktreePath, '.git'), 'utf8');
   const gitPath = /^gitdir: (?<gitPath>.+)\r?\n?$/u.exec(gitLink)?.groups?.['gitPath'];
-  return gitPath && getWorktreeId(commonDirectory, await realpath(path.resolve(worktreePath, gitPath)));
+  return gitPath ? realpath(path.resolve(worktreePath, gitPath)) : undefined;
 }
 
 async function listWorktreePaths(commonDirectory: string) {
@@ -52,7 +79,18 @@ async function listWorktreePaths(commonDirectory: string) {
       }
       try {
         const worktreePath = await realpath(location.slice('worktree '.length));
-        const worktreeId = index === 0 ? '.' : await fetchLinkedWorktreeId(commonDirectory, worktreePath);
+        // Main checkout stores its ID in the common directory; linked checkouts
+        // Store it in their service directory so moves keep the ID and
+        // Recreations get a new one.
+        const gitDirectory =
+          index === 0
+            ? commonDirectory
+            : await fetchLinkedWorktreeGitDir(worktreePath).catch((error: unknown) => {
+                if (checkIsFileMissing(error)) return;
+                throw error;
+              });
+        if (!gitDirectory) return;
+        const worktreeId = await readWorktreeId(gitDirectory);
         if (worktreeId) worktreePathsById.set(worktreeId, worktreePath);
       } catch (error) {
         if (!checkIsFileMissing(error)) throw error;
@@ -62,4 +100,4 @@ async function listWorktreePaths(commonDirectory: string) {
   return worktreePathsById;
 }
 
-export { fetchGitContext, listWorktreePaths };
+export { ensureWorktreeId, fetchGitContext, listWorktreePaths, readWorktreeId };

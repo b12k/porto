@@ -33,9 +33,9 @@ async function cleanupSlots() {
 }
 
 async function destroy(force = false) {
-  assertRegistryWriteAllowed();
   const { commonDirectory } = await fetchGitContext();
   const filePath = getRegistryPath(commonDirectory);
+  assertRegistryWriteAllowed(filePath);
   const unlock = await lockRegistryFile(filePath);
   try {
     const registry = await fetchRegistry(filePath);
@@ -81,7 +81,7 @@ async function getSlot(slotIndex?: number) {
     const record = slots[slotIndex];
     return record ? buildSlot(record, slotIndex) : undefined;
   }
-  const found = findWorktreeSlot(slots, worktreeId);
+  const found = worktreeId === undefined ? undefined : findWorktreeSlot(slots, worktreeId);
   return found ? buildSlot(found.record, found.index) : undefined;
 }
 
@@ -118,7 +118,7 @@ async function releaseSlot(slotIndex?: boolean | number, force = false) {
       const record = registry.slots[selected];
       return record ? releaseRecord(registry, selected, record, forced) : undefined;
     }
-    const found = findWorktreeSlot(registry.slots, worktreeId);
+    const found = worktreeId === undefined ? undefined : findWorktreeSlot(registry.slots, worktreeId);
     return found ? releaseRecord(registry, found.index, found.record, forced) : undefined;
   });
 }
@@ -132,5 +132,5 @@ export { PortoError } from './error';
 export type { PortSlot } from './ports';
 export { reserve } from './reserve';
 export type { ReserveOptions } from './reserve';
-export type { KeepPredicate } from './schemas';
+export type { KeepPredicate, KeepSlot } from './schemas';
 export type { VarFactory, Vars } from './vars';

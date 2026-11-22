@@ -17,7 +17,6 @@ const CONFIG_SCHEMA = z
   .partial();
 
 type PortoConfig = z.input<typeof CONFIG_SCHEMA>;
-type ResolvedReserveConfig = ReturnType<typeof applyReserveDefaults>;
 
 const libraryName = 'porto';
 const { name, version } = packageJson;
@@ -26,19 +25,19 @@ const { name, version } = packageJson;
 // Host and keep are absent: they inherit from the stored slot inside the lock.
 const DEFAULT_CONFIG = {
   env: false,
-  envFile: '.env',
+  envPath: '.env',
   idleTtlMinutes: 60,
-  jsonFile: false as false | string,
+  jsonPath: false as false | string,
   silent: false,
   size: 10,
   start: 10_000,
 };
 
-function resolveOutputSettings(settings: Pick<PortoConfig, 'env' | 'envFile' | 'jsonFile'>) {
+function resolveOutputSettings(settings: Pick<PortoConfig, 'env' | 'envPath' | 'jsonPath'>) {
   return {
     env: settings.env ?? DEFAULT_CONFIG.env,
-    envFile: settings.envFile ?? DEFAULT_CONFIG.envFile,
-    jsonFile: settings.jsonFile ?? DEFAULT_CONFIG.jsonFile,
+    envPath: settings.envPath ?? DEFAULT_CONFIG.envPath,
+    jsonPath: settings.jsonPath ?? DEFAULT_CONFIG.jsonPath,
   };
 }
 
@@ -67,7 +66,7 @@ function defineConfig(config: PortoConfig) {
 
 function parseConfig(config: unknown) {
   const settings = parseSchema(CONFIG_SCHEMA, config, 'configInvalid');
-  if (settings.envFile !== undefined) settings.env ??= true;
+  if (settings.envPath !== undefined) settings.env ??= true;
   return settings;
 }
 
@@ -88,7 +87,7 @@ async function fetchConfig(worktreePath: string): Promise<PortoConfig> {
       : config,
   );
   const directoryPath = path.dirname(result.filepath);
-  for (const key of ['envFile', 'jsonFile'] as const) {
+  for (const key of ['envPath', 'jsonPath'] as const) {
     const configuredPath = settings[key];
     if (typeof configuredPath === 'string') settings[key] = path.resolve(directoryPath, configuredPath);
   }
@@ -106,4 +105,4 @@ export {
   resolveOutputSettings,
   version,
 };
-export type { PortoConfig, ResolvedReserveConfig };
+export type { PortoConfig };

@@ -1,3 +1,4 @@
+/* oxlint-disable import/max-dependencies -- Output formatting needs table, dates, fs, locks and domain helpers. */
 import Table from 'cli-table3';
 import { formatDistance } from 'date-fns/formatDistance';
 import { readFile, stat } from 'node:fs/promises';
@@ -10,11 +11,12 @@ import { PortoError } from './error';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
 import { listBusyPorts } from './ports';
 import { checkIsExpired, getRegistryPath } from './registry';
+import { formatLabeledField, maxLineDisplayWidth, truncateMiddle, wrapCommaValue } from './terminal';
 import { formatEnvironment, formatEnvironmentValue } from './vars';
 
 // Match unrelated names too so their quoted values are skipped as a unit.
 const ENV_ASSIGNMENT_PATTERN =
-  /^(?<prefix>\uFEFF?[ \t]*(?:export[ \t]+)?)(?<name>[^#=\s][^=\r\n]*?)(?<separator>[ \t]*=[ \t]*)(?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|`[^`]*`|[^\r\n#]*?)(?<suffix>[ \t]*(?:#[^\r\n]*)?)(?=\r?$)/gmu;
+  /^(?<prefix>﻿?[ \t]*(?:export[ \t]+)?)(?<name>[^#=\s][^=\r\n]*?)(?<separator>[ \t]*=[ \t]*)(?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|`[^`]*`|[^\r\n#]*?)(?<suffix>[ \t]*(?:#[^\r\n]*)?)(?=\r?$)/gmu;
 
 interface StatsInput {
   expiresAt: string;
@@ -74,6 +76,23 @@ async function assertExportPaths(exportPaths: Array<string>, registryPath: strin
   }
 }
 
+async function assertExportTargetsAreFiles(exportPaths: Array<string>) {
+  await Promise.all(
+    exportPaths.map(async (filePath) => {
+      let targetStat;
+      try {
+        targetStat = await stat(filePath);
+      } catch (error) {
+        if (checkIsFileMissing(error)) return;
+        throw error;
+      }
+      if (targetStat.isDirectory()) {
+        throw new PortoError('exportInvalid', `Export target is a directory: ${filePath}`);
+      }
+    }),
+  );
+}
+
 function clampWidth(termWidth: number, reserved: number, min: number, max: number) {
   return Math.max(min, Math.min(max, termWidth - reserved));
 }
@@ -88,20 +107,19 @@ async function fetchEnvironmentContents(filePath: string) {
 }
 
 async function fetchExportPaths(
-  settings: { env: boolean; envFile: string; jsonFile: false | string },
+  settings: { env: boolean; envPath: string; jsonPath: false | string },
   commonDirectory: string,
 ) {
-  const jsonPath = settings.jsonFile ? await fetchCanonicalPath(path.resolve(settings.jsonFile)) : undefined;
-  const envPath = settings.env ? await fetchCanonicalPath(path.resolve(settings.envFile)) : undefined;
+  const jsonPath = settings.jsonPath ? await fetchCanonicalPath(path.resolve(settings.jsonPath)) : undefined;
+  const envPath = settings.env ? await fetchCanonicalPath(path.resolve(settings.envPath)) : undefined;
   const arePathsEqual =
     jsonPath !== undefined &&
     envPath !== undefined &&
     normalizePathForComparison(jsonPath) === normalizePathForComparison(envPath);
-  if (arePathsEqual) throw new PortoError('exportInvalid', '--json-file and --env-file must use different files.');
-  await assertExportPaths(
-    [jsonPath, envPath].filter((filePath) => filePath !== undefined),
-    getRegistryPath(commonDirectory),
-  );
+  if (arePathsEqual) throw new PortoError('exportInvalid', '--json-path and --env-path must use different files.');
+  const exportPaths = [jsonPath, envPath].filter((filePath) => filePath !== undefined);
+  await assertExportPaths(exportPaths, getRegistryPath(commonDirectory));
+  await assertExportTargetsAreFiles(exportPaths);
   return { envPath, jsonPath };
 }
 
@@ -168,15 +186,6 @@ async function saveEnvironmentFile(filePath: string, vars: SlotVars) {
   await writeFileAtomically(filePath, `${updated}${appended ? `${separator}${appended}${lineEnding}` : ''}`);
 }
 
-function truncateMiddle(text: string, maxLength: number) {
-  if (text.length <= maxLength) return text;
-  const ellipsis = '…';
-  const keep = maxLength - ellipsis.length;
-  const front = Math.ceil(keep / 2);
-  const back = Math.floor(keep / 2);
-  return `${text.slice(0, front)}${ellipsis}${text.slice(text.length - back)}`;
-}
-
 async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDirectory?: string) {
   const targetPath = await fetchCanonicalPath(filePath);
   if (commonDirectory !== undefined) await assertExportPaths([targetPath], getRegistryPath(commonDirectory));
@@ -192,53 +201,15 @@ async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDir
 }
 
 function wrapVarsCell(vars: SlotVars, maxLine: number) {
-  const text = formatVarsCell(vars);
-  if (text.length <= maxLine) return text;
-  const lines: Array<string> = [];
-  let current = '';
-  for (const part of text.split(', ')) {
-    const candidate = current === '' ? part : `${current}, ${part}`;
-    if (candidate.length > maxLine && current !== '') {
-      lines.push(current);
-      current = part;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current !== '') lines.push(current);
-  return lines.join('\n');
+  return wrapCommaValue(formatVarsCell(vars), maxLine);
 }
 
-const NARROW_TERMINAL_WIDTH = 80;
-
-function formatStatsVertical(slots: Array<StatsInput>, busyCells: Array<string>) {
-  const now = Date.now();
-  return slots
-    .map((slot, position) =>
-      [
-        `SLOT ${slot.index}`,
-        `  PORTS: ${slot.firstPort}-${slot.lastPort}`,
-        `  WORKTREE: ${path.basename(slot.worktreePath) || slot.worktreePath}`,
-        `  PATH: ${slot.worktreePath}`,
-        `  LAST USED: ${formatDistance(slot.lastUsedAt, now, { addSuffix: true })}`,
-        `  IDLE (MIN): ${slot.idleTtlMinutes}`,
-        `  KEEP: ${slot.keep ? 'yes' : 'no'}`,
-        `  EXPIRED: ${(slot.isExpired ?? checkIsExpired(slot, now)) ? 'yes' : 'no'}`,
-        `  VARS: ${formatVarsCell(slot.vars)}`,
-        `  BUSY PORTS: ${busyCells[position] ?? 'unknown'}`,
-      ].join('\n'),
-    )
-    .join('\n\n');
-}
-
-async function formatStatsTable(slots: Array<StatsInput>) {
-  const now = Date.now();
-  // A slot whose saved host is gone from this machine must not hide the other rows.
-  const busyCells = await Promise.all(slots.map((slot) => fetchBusyCell(slot)));
-  const termWidth = getTerminalWidth();
-  if (termWidth !== undefined && termWidth <= NARROW_TERMINAL_WIDTH && slots.length > 0) {
-    return formatStatsVertical(slots, busyCells);
-  }
+function buildHorizontalTable(
+  slots: Array<StatsInput>,
+  busyCells: Array<string>,
+  termWidth: number | undefined,
+  now: number,
+) {
   const pathMax = termWidth === undefined ? Number.POSITIVE_INFINITY : clampWidth(termWidth, 90, 16, 48);
   const varsMax = termWidth === undefined ? Number.POSITIVE_INFINITY : clampWidth(termWidth, 80, 16, 50);
   const table = new Table({
@@ -261,6 +232,55 @@ async function formatStatsTable(slots: Array<StatsInput>) {
     ]);
   }
   return table.toString();
+}
+
+function formatStatsVertical(slots: Array<StatsInput>, busyCells: Array<string>, termWidth?: number) {
+  const now = Date.now();
+  return slots
+    .map((slot, position) => {
+      const busy = busyCells[position] ?? 'unknown';
+      const expired = (slot.isExpired ?? checkIsExpired(slot, now)) ? 'yes' : 'no';
+      if (termWidth === undefined) {
+        return [
+          `SLOT ${slot.index}`,
+          `  PORTS: ${slot.firstPort}-${slot.lastPort}`,
+          `  WORKTREE: ${path.basename(slot.worktreePath) || slot.worktreePath}`,
+          `  PATH: ${slot.worktreePath}`,
+          `  LAST USED: ${formatDistance(slot.lastUsedAt, now, { addSuffix: true })}`,
+          `  IDLE (MIN): ${slot.idleTtlMinutes}`,
+          `  KEEP: ${slot.keep ? 'yes' : 'no'}`,
+          `  EXPIRED: ${expired}`,
+          `  VARS: ${formatVarsCell(slot.vars)}`,
+          `  BUSY PORTS: ${busy}`,
+        ].join('\n');
+      }
+      return [
+        `SLOT ${slot.index}`,
+        `  PORTS: ${slot.firstPort}-${slot.lastPort}`,
+        formatLabeledField('WORKTREE', path.basename(slot.worktreePath) || slot.worktreePath, termWidth),
+        formatLabeledField('PATH', slot.worktreePath, termWidth),
+        formatLabeledField('LAST USED', formatDistance(slot.lastUsedAt, now, { addSuffix: true }), termWidth),
+        formatLabeledField('IDLE (MIN)', String(slot.idleTtlMinutes), termWidth),
+        formatLabeledField('KEEP', slot.keep ? 'yes' : 'no', termWidth),
+        formatLabeledField('EXPIRED', expired, termWidth),
+        formatLabeledField('VARS', formatVarsCell(slot.vars), termWidth),
+        formatLabeledField('BUSY PORTS', busy, termWidth),
+      ].join('\n');
+    })
+    .join('\n\n');
+}
+
+async function formatStatsTable(slots: Array<StatsInput>, terminalWidth?: number) {
+  const now = Date.now();
+  // A slot whose saved host is gone from this machine must not hide the other rows.
+  const busyCells = await Promise.all(slots.map((slot) => fetchBusyCell(slot)));
+  const termWidth = terminalWidth ?? getTerminalWidth();
+  if (termWidth === undefined || slots.length === 0) {
+    return buildHorizontalTable(slots, busyCells, termWidth, now);
+  }
+  const horizontal = buildHorizontalTable(slots, busyCells, termWidth, now);
+  if (maxLineDisplayWidth(horizontal) <= termWidth) return horizontal;
+  return formatStatsVertical(slots, busyCells, termWidth);
 }
 
 async function writeReserveJsonFile(filePath: string, vars: SlotVars) {

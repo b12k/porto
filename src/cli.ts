@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* oxlint-disable perfectionist/sort-modules -- CLI handlers ordered by use. */
 
 import { Command } from 'commander';
 import { compact, pickBy } from 'es-toolkit';
@@ -56,11 +57,30 @@ async function runHook(hookName: string, hook: () => Promise<void> | void) {
   }
 }
 
+function findBusyPortsError(error: unknown): BusyPortsError | undefined {
+  if (error instanceof BusyPortsError) return error;
+  if (error instanceof AggregateError) {
+    for (const inner of error.errors) {
+      const found = findBusyPortsError(inner);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (error instanceof Error && 'cause' in error && error.cause !== undefined) {
+    return findBusyPortsError(error.cause);
+  }
+  return undefined;
+}
+
 async function runReleaseHooks(onReleased: PortoConfig['onReleased'], slots: Array<PortSlot>) {
   if (!onReleased) return;
   const results = await Promise.allSettled(slots.map((slot) => runHook('onReleased', () => onReleased(slot))));
   const failure = results.find((result) => result.status === 'rejected');
   if (failure) throw failure.reason;
+}
+
+function parseSlotNumber(index: string) {
+  return Number(index.trim() || Number.NaN);
 }
 
 function writeOutput(contents: string) {
@@ -73,23 +93,21 @@ async function handleReserve(flags: ReserveFlags, command: Command) {
   const { envPath, jsonPath } = await fetchExportPaths(resolveOutputSettings(settings), git.commonDirectory);
   // Values that cannot be rendered as env lines must fail before the registry is written.
   const needsEnvFormat = envPath !== undefined || (!(settings.silent ?? false) && !json && resolvedVars !== undefined);
+  // Registry save happens before JSON/env exports under the same lock.
+  // Reserved hook runs only after the lock is released.
   const slot = await commitReservation(
     git,
     { ...settings, vars: resolvedVars },
     needsEnvFormat ? { envFormat: true } : undefined,
+    async (vars) => {
+      if (jsonPath) await writeReserveJsonFile(jsonPath, vars);
+      if (envPath) await updateEnvironmentFile(envPath, vars, git.commonDirectory);
+    },
   );
   const vars = resolvedVars === undefined ? undefined : slot.vars;
   const output = slot.silent ? undefined : formatReserveOutput(slot, vars, json);
-  if (jsonPath) await writeReserveJsonFile(jsonPath, slot.vars);
-  if (envPath) {
-    await updateEnvironmentFile(envPath, slot.vars, git.commonDirectory);
-  }
   if (onReserved) await runHook('onReserved', () => onReserved(slot));
   if (output !== undefined) writeOutput(output);
-}
-
-function parseSlotNumber(index: string) {
-  return Number(index.trim() || Number.NaN);
 }
 
 const cli = new Command('porto');
@@ -109,13 +127,13 @@ cli
   .option('--vars <vars>', 'NAME or NAME=template variables (| shares a port, ; starts the next)')
   .option('--no-vars', 'Ignore configured variables')
   .option('--json', 'Print JSON to stdout')
-  .option('--json-file <file>', 'Save JSON to a file independently of stdout')
-  .option('--no-json-file', 'Skip the configured JSON file')
+  .option('--json-path <file>', 'Save JSON to a file independently of stdout')
+  .option('--no-json-path', 'Skip the configured JSON file')
   .option('--silent', 'Skip the reservation output on stdout')
   .option('--no-silent', 'Print the reservation output on stdout')
   .option('--env', 'Update the env file (default: disabled)')
   .option('--no-env', 'Skip the env file')
-  .option('--env-file <file>', 'Set the env filename and enable env output (default: .env)')
+  .option('--env-path <file>', 'Set the env filename and enable env output (default: .env)')
   .option('--keep', 'Keep this slot until explicitly released')
   .option('--no-keep', 'Restore idle cleanup for this slot')
   .action(handleReserve);
@@ -156,7 +174,13 @@ cli
       if (!(error instanceof BusyPortsError) || !flags.all) throw error;
       // A partial release already saved the free slots; their hooks still run.
       slots = error.releasedSlots;
-      await runReleaseHooks(onReleased, slots);
+      try {
+        await runReleaseHooks(onReleased, slots);
+      } catch (hookError) {
+        const hookMessage = hookError instanceof Error ? hookError.message : String(hookError);
+        // oxlint-disable-next-line preserve-caught-error -- Both errors are preserved in the AggregateError list.
+        throw new AggregateError([error, hookError], `${error.message}\n${hookMessage}`, { cause: error });
+      }
       throw error;
     }
     await runReleaseHooks(onReleased, slots);
@@ -179,11 +203,12 @@ cli.version(version);
 try {
   await cli.parseAsync();
 } catch (error) {
-  if (error instanceof BusyPortsError) {
+  const busyError = findBusyPortsError(error);
+  if (busyError) {
     process.stderr.write(
       `${formatTable(
         ['SLOT', 'PORT'],
-        error.ports.map(({ port, slot }) => [String(slot), String(port)]),
+        busyError.ports.map(({ port, slot }) => [String(slot), String(port)]),
       )}\n`,
     );
   }
