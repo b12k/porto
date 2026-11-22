@@ -7,6 +7,7 @@ import lockfile from 'proper-lockfile';
 
 import type { SlotVars } from './vars';
 
+import { LOOPBACK_HOST } from './config';
 import { assertExportPaths, assertLockPathUsable } from './export-paths';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
 import { listBusyPorts } from './ports';
@@ -52,7 +53,7 @@ function formatBusyCell(ports: Array<number>) {
 
 async function fetchBusyCell(slot: Pick<StatsInput, 'firstPort' | 'host' | 'lastPort'>) {
   try {
-    return formatBusyCell(await listBusyPorts(slot.firstPort, slot.lastPort, { host: slot.host }));
+    return formatBusyCell(await listBusyPorts(slot.firstPort, slot.lastPort, { host: slot.host ?? LOOPBACK_HOST }));
   } catch {
     return 'unknown';
   }

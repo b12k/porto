@@ -5,6 +5,7 @@ import type { PortSlot } from './ports';
 import type { Registry, ReservationRecord } from './registry';
 
 import { BusyPortsError } from './busy-ports-error';
+import { LOOPBACK_HOST } from './config';
 import { PortoError } from './error';
 import { fetchGitContext, listWorktreePaths } from './git';
 import { PartialReleaseError } from './partial-release-error';
@@ -45,7 +46,7 @@ async function destroy(force = false) {
       for (const { index, record } of slotEntries(registry.slots)) {
         // Report every busy slot at once instead of failing on the first one.
         // oxlint-disable-next-line no-await-in-loop
-        const busy = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
+        const busy = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host ?? LOOPBACK_HOST });
         busyPorts.push(...busy.map((port) => ({ port, slot: index })));
       }
       if (busyPorts.length > 0) throw new BusyPortsError(busyPorts);

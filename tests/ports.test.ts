@@ -3,17 +3,14 @@ import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
 
+import { LOOPBACK_HOST } from '../src/config';
 import { listBusyPorts } from '../src/ports';
+import { fetchFreeRange } from './fixture';
 
 const interfaces = Object.entries(networkInterfaces()).flatMap(([name, addresses]) =>
   (addresses ?? []).map((address) => Object.assign(address, { name })),
 );
 const ipv4Host = interfaces.find((address) => address.family === 'IPv4' && !address.internal)?.address;
-const ipv6Interface = interfaces.find((address) => address.family === 'IPv6' && address.scopeid > 0);
-const ipv6Host =
-  ipv6Interface?.family === 'IPv6'
-    ? `${ipv6Interface.address}%${process.platform === 'win32' ? ipv6Interface.scopeid : ipv6Interface.name}`
-    : undefined;
 const servers: Array<ReturnType<typeof createServer>> = [];
 
 async function closeListener(server: ReturnType<typeof createServer>) {
@@ -23,10 +20,11 @@ async function closeListener(server: ReturnType<typeof createServer>) {
   await closed;
 }
 
-async function createListener(host: string) {
+async function createListener(host?: string) {
   const server = createServer();
   servers.push(server);
-  server.listen({ host, ipv6Only: true, port: 0 });
+  if (host === undefined) server.listen({ port: 0 });
+  else server.listen({ host, port: 0 });
   await once(server, 'listening');
   const address = server.address();
   if (typeof address !== 'object' || address === null) throw new Error('Missing server address.');
@@ -37,14 +35,20 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => closeListener(server)));
 });
 
-it.skipIf(!ipv4Host)('detects a busy port bound to a local IPv4 interface', async () => {
-  if (!ipv4Host) throw new Error('Missing IPv4 interface.');
-  const port = await createListener(ipv4Host);
-  expect(await listBusyPorts(port, port)).toEqual([port]);
+it('reports a free range as free on loopback', async () => {
+  const start = await fetchFreeRange(4);
+  expect(await listBusyPorts(start, start + 3, { host: LOOPBACK_HOST })).toEqual([]);
 });
 
-it.skipIf(!ipv6Host)('detects a busy port bound to a scoped local IPv6 interface', async () => {
-  if (!ipv6Host) throw new Error('Missing scoped IPv6 interface.');
-  const port = await createListener(ipv6Host);
-  expect(await listBusyPorts(port, port)).toEqual([port]);
+it.skipIf(!ipv4Host)('detects a busy port on an explicitly probed IPv4 interface', async () => {
+  if (!ipv4Host) throw new Error('Missing IPv4 interface.');
+  const port = await createListener(ipv4Host);
+  expect(await listBusyPorts(port, port, { host: ipv4Host })).toEqual([port]);
+});
+
+it('detects a wildcard listener through the loopback probe', async () => {
+  // A default listen() binds the wildcard address like a typical dev server
+  // (express, vite); probing 127.0.0.1 must still report the port as busy.
+  const port = await createListener();
+  expect(await listBusyPorts(port, port, { host: LOOPBACK_HOST })).toEqual([port]);
 });
