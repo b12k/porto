@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it } from '@rstest/core';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
@@ -140,4 +140,62 @@ it('keeps the registry and JSON export consistent across overlapping CLI reserve
     await doReleaseEnvLock();
     await Promise.allSettled(pending);
   }
+});
+
+it('rejects an env lock conflict that appears while waiting for the registry without changing the reservation', async () => {
+  const registryPath = path.join(repositoryPath, '.git', 'porto-registry.json');
+  const portArgs = ['--start', String(start), '--size', '2', '--host', '127.0.0.1'];
+  await runReserve(['reserve', ...portArgs, '--vars', 'LABEL=first'], repositoryPath);
+  const originalRegistry = await readFile(registryPath, 'utf8');
+  await writeFile(
+    path.join(repositoryPath, 'porto.config.ts'),
+    `import { writeFileSync } from 'node:fs';
+    export default { onReserved() { writeFileSync('hook-ran', ''); } };`,
+  );
+  const signalPath = path.join(repositoryPath, 'waiting-for-registry');
+  const preload = `
+    import { createRequire } from 'node:module';
+    const require = createRequire(${JSON.stringify(cliPath)});
+    const fs = createRequire(require.resolve('proper-lockfile'))('graceful-fs');
+    const mkdir = fs.mkdir;
+    fs.mkdir = function (target, ...args) {
+      if (typeof target === 'string' && target.endsWith('porto-registry.json.lock')) {
+        fs.writeFileSync(${JSON.stringify(signalPath)}, 'waiting');
+      }
+      return mkdir.call(this, target, ...args);
+    };
+  `;
+  const unlock = await lockfile.lock(registryPath, { realpath: false });
+  const reserve = execFileAsync(
+    process.execPath,
+    [
+      '--import',
+      tsxPath,
+      '--import',
+      `data:text/javascript,${encodeURIComponent(preload)}`,
+      '--',
+      cliPath,
+      'reserve',
+      ...portArgs,
+      '--vars',
+      'LABEL=second',
+      '--env-path',
+      'runtime',
+    ],
+    { cwd: repositoryPath },
+  ).catch((error: unknown) => error);
+  try {
+    await expect.poll(() => readFile(signalPath, 'utf8'), { timeout: 10_000 }).toBe('waiting');
+    await writeFile(path.join(repositoryPath, 'runtime.lock'), 'another process wrote this file');
+  } finally {
+    await unlock();
+    await reserve;
+  }
+  expect(await reserve).toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining('Export conflicts with an existing file') as unknown,
+  });
+  expect(await readFile(registryPath, 'utf8')).toBe(originalRegistry);
+  await expect(readFile(path.join(repositoryPath, 'runtime'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(readFile(path.join(repositoryPath, 'hook-ran'))).rejects.toMatchObject({ code: 'ENOENT' });
 });

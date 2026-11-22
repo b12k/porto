@@ -172,6 +172,48 @@ it('awaits every bulk release hook before reporting a hook failure', async () =>
   expect(await runApi('console.log(JSON.stringify(await getAllSlots()));')).toEqual([]);
 });
 
+it.each([false, true])(
+  'runs release hooks and reports unresolved hosts when a busy slot is present: %s',
+  async (hasBusySlot) => {
+    await reserveSlots();
+    await runCli(['reserve', '--host=porto-audit-missing.invalid'], otherPath);
+    const busyServer = createServer();
+    const busyPort = start + 4;
+    if (hasBusySlot) {
+      const busyPath = path.join(directoryPath, 'busy');
+      await runGit(['worktree', 'add', '--detach', busyPath]);
+      await runCli(['reserve', '--host=127.0.0.1'], busyPath);
+      busyServer.listen({ host: '127.0.0.1', port: busyPort });
+      await once(busyServer, 'listening');
+    }
+    try {
+      await writeFile(
+        path.join(directoryPath, 'porto.config.ts'),
+        `import { appendFileSync } from 'node:fs';
+      export default { onReleased(slot) { appendFileSync('released.txt', slot.index + '\\n'); } };`,
+      );
+      const failure = runCli(['release', '--all']);
+      const unresolved = expect.stringMatching(/unverified[\s│]+host: 1/u) as unknown;
+      await expect(failure).rejects.toMatchObject({ code: 1, stderr: unresolved });
+      if (hasBusySlot) {
+        await expect(failure).rejects.toMatchObject({
+          stderr: expect.stringMatching(new RegExp(`│\\s*2\\s*│\\s*${busyPort}\\s*│`, 'u')) as unknown,
+        });
+      }
+      expect(await readFile(path.join(directoryPath, 'released.txt'), 'utf8')).toBe('0\n');
+      expect(await runApi('console.log(JSON.stringify((await getAllSlots()).map(slot => slot.index)));')).toEqual(
+        hasBusySlot ? [1, 2] : [1],
+      );
+    } finally {
+      if (busyServer.listening) {
+        const closed = once(busyServer, 'close');
+        busyServer.close();
+        await closed;
+      }
+    }
+  },
+);
+
 it.each([
   { args: ['show', '0', '--all'] },
   { args: ['release', '0', '--all'] },

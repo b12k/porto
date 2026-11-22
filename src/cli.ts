@@ -16,6 +16,7 @@ import {
   destroy,
   getAllSlots,
   getSlot,
+  PartialReleaseError,
   PortoError,
   releaseAllSlots,
   releaseSlot,
@@ -91,18 +92,23 @@ function writeOutput(contents: string) {
 async function handleReserve(flags: ReserveFlags, command: Command) {
   const git = await fetchGitContext();
   const { json, onReserved, vars: resolvedVars, ...settings } = await fetchSettings(flags, command, git.worktreePath);
-  const { envPath, jsonPath } = await fetchExportPaths(resolveOutputSettings(settings), git.commonDirectory);
+  const exportSettings = resolveOutputSettings(settings);
   // Values that cannot be rendered as env lines must fail before the registry is written.
-  const needsEnvFormat = envPath !== undefined || (!(settings.silent ?? false) && !json && resolvedVars !== undefined);
+  const needsEnvFormat = exportSettings.env || (!(settings.silent ?? false) && !json && resolvedVars !== undefined);
   // Registry save happens before JSON/env exports under the same lock.
   // Reserved hook runs only after the lock is released.
   const slot = await commitReservation(
     git,
     { ...settings, vars: resolvedVars },
-    needsEnvFormat ? { envFormat: true } : undefined,
-    async (vars) => {
-      if (jsonPath) await writeReserveJsonFile(jsonPath, vars);
-      if (envPath) await updateEnvironmentFile(envPath, vars, git.commonDirectory);
+    {
+      envFormat: needsEnvFormat,
+      async prepareExports() {
+        const { envPath, jsonPath } = await fetchExportPaths(exportSettings, git.commonDirectory);
+        return async (vars) => {
+          if (jsonPath) await writeReserveJsonFile(jsonPath, vars);
+          if (envPath) await updateEnvironmentFile(envPath, vars, git.commonDirectory);
+        };
+      },
     },
   );
   const vars = resolvedVars === undefined ? undefined : slot.vars;
@@ -172,7 +178,7 @@ cli
     try {
       slots = flags.all ? await releaseAllSlots(force) : compact([await releaseSlot(slotIndex, force)]);
     } catch (error) {
-      if (!(error instanceof BusyPortsError) || !flags.all) throw error;
+      if (!(error instanceof PartialReleaseError) || !flags.all) throw error;
       // A partial release already saved the free slots; their hooks still run.
       slots = error.releasedSlots;
       try {

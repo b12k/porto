@@ -1,21 +1,19 @@
 import type { PortSlot } from './ports';
 
-import { PortoError } from './error';
+import { PartialReleaseError } from './partial-release-error';
 
 interface BusyPort {
   port: number;
   slot: number;
 }
 
-export class BusyPortsError extends PortoError {
+export class BusyPortsError extends PartialReleaseError {
   public readonly ports: Array<BusyPort>;
-  public readonly releasedSlots: Array<PortSlot>;
 
-  public constructor(ports: Array<BusyPort>, releasedSlots: Array<PortSlot> = []) {
-    super('portsBusy');
+  public constructor(ports: Array<BusyPort>, releasedSlots: Array<PortSlot> = [], unresolvedSlots: Array<number> = []) {
+    super('portsBusy', releasedSlots, unresolvedSlots);
     this.name = 'BusyPortsError';
     this.ports = ports;
-    this.releasedSlots = releasedSlots;
   }
 }
 

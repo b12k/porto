@@ -7,6 +7,7 @@ import type { Registry, ReservationRecord } from './registry';
 import { BusyPortsError } from './busy-ports-error';
 import { PortoError } from './error';
 import { fetchGitContext, listWorktreePaths } from './git';
+import { PartialReleaseError } from './partial-release-error';
 import { buildSlot, listBusyPorts } from './ports';
 import {
   assertRegistryWriteAllowed,
@@ -114,9 +115,9 @@ async function releaseAllSlots(force = false) {
     }
     return { busyPorts: occupiedPorts, releasedSlots: freedSlots, skippedSlots };
   });
-  if (busyPorts.length > 0) throw new BusyPortsError(busyPorts, releasedSlots);
+  if (busyPorts.length > 0) throw new BusyPortsError(busyPorts, releasedSlots, unresolvedSlots);
   if (unresolvedSlots.length > 0) {
-    throw new PortoError('hostUnresolved', `Slots left in place: ${unresolvedSlots.join(', ')}`);
+    throw new PartialReleaseError('hostUnresolved', releasedSlots, unresolvedSlots);
   }
   return releasedSlots;
 }
@@ -144,6 +145,7 @@ export { BusyPortsError } from './busy-ports-error';
 export { defineConfig } from './config';
 export type { PortoConfig } from './config';
 export { PortoError } from './error';
+export { PartialReleaseError } from './partial-release-error';
 export type { PortSlot } from './ports';
 export { reserve } from './reserve';
 export type { ReserveOptions } from './reserve';
