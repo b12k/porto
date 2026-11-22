@@ -5,15 +5,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import lockfile from 'proper-lockfile';
 
 import { fetchFreeRange } from './fixture';
 
 const execFileAsync = promisify(execFile);
 const cliPath = path.resolve(import.meta.dirname, '../src/cli.ts');
-const reserveUrl = new URL('../src/reserve.ts', import.meta.url).href;
-const gitUrl = new URL('../src/git.ts', import.meta.url).href;
-const outputUrl = new URL('../src/output.ts', import.meta.url).href;
-const varsUrl = new URL('../src/vars.ts', import.meta.url).href;
 const tsxPath = import.meta.resolve('tsx');
 let directoryPath: string;
 let repositoryPath: string;
@@ -23,31 +20,23 @@ function runGit(args: Array<string>, cwd = repositoryPath) {
   return execFileAsync('git', args, { cwd });
 }
 
-function runReserve(args: Array<string>, cwd: string, delayMs: string) {
-  return execFileAsync(process.execPath, ['--import', tsxPath, '--', cliPath, ...args], {
-    cwd,
-    env: { ...process.env, PORTO_TEST_EXPORT_DELAY_MS: delayMs },
-  });
+function runReserve(args: Array<string>, cwd: string) {
+  return execFileAsync(process.execPath, ['--import', tsxPath, '--', cliPath, ...args], { cwd });
 }
 
-async function waitForFirstSlot(registryPath: string, deadline: number): Promise<void> {
-  let saved = false;
+async function waitForStuckFirst(registryPath: string, jsonPath: string, deadline: number): Promise<void> {
   try {
-    const snapshot: unknown = JSON.parse(await readFile(registryPath, 'utf8'));
-    saved =
-      typeof snapshot === 'object' &&
-      snapshot !== null &&
-      'slots' in snapshot &&
-      typeof snapshot.slots === 'object' &&
-      snapshot.slots !== null &&
-      '0' in snapshot.slots;
+    expect(JSON.parse(await readFile(registryPath, 'utf8'))).toMatchObject({
+      slots: { 0: { vars: { LABEL: 'first' } } },
+    });
+    expect(JSON.parse(await readFile(jsonPath, 'utf8'))).toEqual({ LABEL: 'first' });
+    return;
   } catch {
-    // The registry file does not exist yet.
+    // The first reservation is not saved and exported yet; poll again.
   }
-  if (saved) return;
   if (Date.now() > deadline) throw new Error('Timed out waiting for the first reservation.');
   await setTimeout(50);
-  return waitForFirstSlot(registryPath, deadline);
+  return waitForStuckFirst(registryPath, jsonPath, deadline);
 }
 
 beforeEach(async () => {
@@ -79,83 +68,76 @@ afterEach(async () => {
   await rm(resolvedPath, { force: true, recursive: true });
 });
 
-it('keeps the registry and JSON export consistent under overlapping reserves', async () => {
-  const worktreePath = path.join(directoryPath, 'other');
-  await runGit(['worktree', 'add', '--detach', worktreePath]);
-  const jsonPath = path.join(repositoryPath, 'ports.json');
-  const script = `
-    const { commitReservation } = await import(${JSON.stringify(reserveUrl)});
-    const { fetchGitContext } = await import(${JSON.stringify(gitUrl)});
-    const { writeReserveJsonFile } = await import(${JSON.stringify(outputUrl)});
-    const { parseVars } = await import(${JSON.stringify(varsUrl)});
-    const { readFile } = await import('node:fs/promises');
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    process.chdir(${JSON.stringify(repositoryPath)});
-    const gitA = await fetchGitContext();
-    process.chdir(${JSON.stringify(worktreePath)});
-    const gitB = await fetchGitContext();
-    let entered = false;
-    const first = commitReservation(
-      gitA,
-      { start: ${start}, size: 2, vars: parseVars('LABEL=first') },
-      undefined,
-      async (vars) => {
-        entered = true;
-        await sleep(800);
-        await writeReserveJsonFile(${JSON.stringify(jsonPath)}, vars);
-      },
-    );
-    while (!entered) await sleep(50);
-    const second = commitReservation(
-      gitB,
-      { start: ${start}, size: 2, vars: parseVars('LABEL=second') },
-      undefined,
-      async (vars) => writeReserveJsonFile(${JSON.stringify(jsonPath)}, vars),
-    );
-    const [s1, s2] = await Promise.all([first, second]);
-    const file = JSON.parse(await readFile(${JSON.stringify(jsonPath)}, 'utf8'));
-    console.log(JSON.stringify({ file, s1: s1.vars, s2: s2.vars, i1: s1.index, i2: s2.index }));
-  `;
-  const { stdout } = await execFileAsync(process.execPath, ['--import', tsxPath, '--input-type=module', '-e', script], {
-    cwd: repositoryPath,
-  });
-  // The last completed reservation wins the shared file; a stale export
-  // From the first reservation must not survive after the second one.
-  const result: unknown = JSON.parse(stdout);
-  expect(result).toMatchObject({
-    file: { LABEL: 'second' },
-    i1: 0,
-    i2: 1,
-    s1: { LABEL: 'first' },
-    s2: { LABEL: 'second' },
-  });
-  const registry: unknown = JSON.parse(
-    await readFile(path.join(repositoryPath, '.git', 'porto-registry.json'), 'utf8'),
-  );
-  expect(registry).toMatchObject({ slots: { 0: { vars: { LABEL: 'first' } }, 1: { vars: { LABEL: 'second' } } } });
-});
-
 it('keeps the registry and JSON export consistent across overlapping CLI reserves', async () => {
   const worktreePath = path.join(directoryPath, 'other');
   await runGit(['worktree', 'add', '--detach', worktreePath]);
-  const jsonName = path.join(repositoryPath, 'ports.json');
-  function runReserveArgs(label: string): Array<string> {
-    return ['reserve', '--start', String(start), '--size', '2', '--vars', `LABEL=${label}`, '--json-path', jsonName];
+  const jsonPath = path.join(repositoryPath, 'ports.json');
+  const envPath = path.join(repositoryPath, 'shared.env');
+  const registryPath = path.join(repositoryPath, '.git', 'porto-registry.json');
+  const pending: Array<Promise<unknown>> = [];
+  // Hold the env file lock so the first reserve pauses inside its export
+  // Window while still holding the registry lock. No fixed sleep decides the
+  // Overlap: the pause lasts until the test releases it below.
+  const releaseEnvLock = await lockfile.lock(envPath, {
+    realpath: false,
+    retries: { factor: 1, maxTimeout: 100, minTimeout: 100, retries: 200 },
+    stale: 120_000,
+    update: 2000,
+  });
+  let envReleased = false;
+  async function doReleaseEnvLock() {
+    if (!envReleased) {
+      envReleased = true;
+      await releaseEnvLock();
+    }
   }
-  const first = runReserve(runReserveArgs('first'), repositoryPath, '3000');
-  // Wait until the first reservation is saved so the second one overlaps it
-  // Inside the JSON export window while the registry lock is still held.
-  await waitForFirstSlot(path.join(repositoryPath, '.git', 'porto-registry.json'), Date.now() + 10_000);
-  const second = runReserve(runReserveArgs('second'), worktreePath, '0');
-  const [firstResult, secondResult] = await Promise.all([first, second]);
-  expect(firstResult.stdout).toContain('LABEL=first');
-  expect(secondResult.stdout).toContain('LABEL=second');
-  const file: unknown = JSON.parse(await readFile(jsonName, 'utf8'));
-  // The last completed CLI reservation wins the shared file; a stale export
-  // From the first process must not survive after the second one.
-  expect(file).toEqual({ LABEL: 'second' });
-  const registry: unknown = JSON.parse(
-    await readFile(path.join(repositoryPath, '.git', 'porto-registry.json'), 'utf8'),
-  );
-  expect(registry).toMatchObject({ slots: { 0: { vars: { LABEL: 'first' } }, 1: { vars: { LABEL: 'second' } } } });
+  try {
+    const first = runReserve(
+      [
+        'reserve',
+        '--start',
+        String(start),
+        '--size',
+        '2',
+        '--vars',
+        'LABEL=first',
+        '--env-path',
+        envPath,
+        '--json-path',
+        jsonPath,
+      ],
+      repositoryPath,
+    );
+    pending.push(first);
+    // The registry entry plus the JSON file prove the first reserve reached
+    // The env export: it cannot finish while this test holds the env lock,
+    // So it is stuck keeping the registry lock.
+    await waitForStuckFirst(registryPath, jsonPath, Date.now() + 15_000);
+    const secondState = { done: false };
+    const second = runReserve(
+      ['reserve', '--start', String(start), '--size', '2', '--vars', 'LABEL=second', '--json-path', jsonPath],
+      worktreePath,
+    ).then((result) => {
+      secondState.done = true;
+      return result;
+    });
+    pending.push(second);
+    // If the second reserve finishes before the env lock is released, it
+    // Slipped through without waiting: the exports left the registry lock.
+    await setTimeout(5000);
+    if (secondState.done) throw new Error('The second reserve finished while the first still held the registry lock.');
+    await doReleaseEnvLock();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.stdout).toContain('LABEL=first');
+    expect(secondResult.stdout).toContain('LABEL=second');
+    // The last completed CLI reservation wins the shared file; a stale export
+    // From the first process must not survive after the second one.
+    const file: unknown = JSON.parse(await readFile(jsonPath, 'utf8'));
+    expect(file).toEqual({ LABEL: 'second' });
+    const registry: unknown = JSON.parse(await readFile(registryPath, 'utf8'));
+    expect(registry).toMatchObject({ slots: { 0: { vars: { LABEL: 'first' } }, 1: { vars: { LABEL: 'second' } } } });
+  } finally {
+    await doReleaseEnvLock();
+    await Promise.allSettled(pending);
+  }
 });
