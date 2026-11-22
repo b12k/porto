@@ -128,7 +128,7 @@ cli
   .command('reserve', { isDefault: true })
   .description('Reserve a stable TCP port slot for the current worktree')
   .option('--start <port>', 'First port of the range (default: 10000)', Number)
-  .option('--host <host>', 'Host to check for busy ports (default: detect local addresses)')
+  .option('--host <host>', 'Host to check for busy ports (default: 127.0.0.1)')
   .option('--size <count>', 'Number of ports in each slot (default: 10)', Number)
   .option('--idle <minutes>', 'Idle TTL in minutes (default: 60)', Number)
   .option('--vars <vars>', 'NAME or NAME=template variables (| shares a port, ; starts the next)')

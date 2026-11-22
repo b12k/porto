@@ -8,7 +8,7 @@ import type { KeepPredicate, KeepSlot, OPTIONS_SCHEMA } from './schemas';
 import type { SlotVars, Vars, VarsResult } from './vars';
 
 import { BusyPortsError } from './busy-ports-error';
-import { applyReserveDefaults } from './config';
+import { applyReserveDefaults, LOOPBACK_HOST } from './config';
 import { PortoError } from './error';
 import { ensureWorktreeId, fetchGitContext } from './git';
 import { buildSlot, checkHasBusyPort, listBusyPorts } from './ports';
@@ -30,7 +30,7 @@ async function allocateRecord(registry: Registry, options: Omit<ReservationRecor
     const isOccupied = slots[index] !== undefined;
     // Check candidates in order without opening thousands of sockets at once.
     // oxlint-disable-next-line no-await-in-loop
-    if (!isOccupied && !(await checkHasBusyPort(firstPort, lastPort, options.host))) {
+    if (!isOccupied && !(await checkHasBusyPort(firstPort, lastPort, options.host ?? LOOPBACK_HOST))) {
       const record = { ...options, firstPort, lastPort, vars: {} };
       slots[index] = record;
       return { index, record };
@@ -48,7 +48,8 @@ function isAddressUnavailableError(error: unknown) {
       error.code === 'ENETUNREACH' ||
       error.code === 'EHOSTUNREACH' ||
       error.code === 'ENOTFOUND' ||
-      error.code === 'EAI_AGAIN')
+      error.code === 'EAI_AGAIN' ||
+      error.code === 'ETIMEDOUT')
   );
 }
 
@@ -62,7 +63,7 @@ function issuePorts(record: ReservationRecord, index: number, entries: Vars) {
 
 async function releaseRecord(registry: Registry, index: number, record: ReservationRecord, force = false) {
   if (!force) {
-    const busyPorts = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host });
+    const busyPorts = await listBusyPorts(record.firstPort, record.lastPort, { host: record.host ?? LOOPBACK_HOST });
     if (busyPorts.length > 0) throw new BusyPortsError(busyPorts.map((port) => ({ port, slot: index })));
   }
   // oxlint-disable-next-line typescript/no-dynamic-delete -- Slot indices are dynamic by design.
@@ -76,14 +77,16 @@ async function removeExpiredRecords(registry: Registry, now: number, excludeInde
       slotEntries(registry.slots)
         .filter(({ index, record }) => index !== excludeIndex && checkIsExpired(record, now))
         .map(async ({ index, record }) => {
-          const hasBusyPort = await checkHasBusyPort(record.firstPort, record.lastPort, record.host).catch(
-            (error: unknown) => {
-              // A slot whose saved host is gone from this machine must not block
-              // Other worktrees: keep it and continue with the remaining slots.
-              if (isAddressUnavailableError(error)) return true;
-              throw error;
-            },
-          );
+          const hasBusyPort = await checkHasBusyPort(
+            record.firstPort,
+            record.lastPort,
+            record.host ?? LOOPBACK_HOST,
+          ).catch((error: unknown) => {
+            // A slot whose saved host is gone from this machine must not block
+            // Other worktrees: keep it and continue with the remaining slots.
+            if (isAddressUnavailableError(error)) return true;
+            throw error;
+          });
           return hasBusyPort ? undefined : buildSlot(record, index);
         }),
     ),
@@ -145,7 +148,7 @@ async function commitReservation(
       const baseSettings = {
         env,
         envPath,
-        host: host ?? existingRecord?.host,
+        host: host ?? existingRecord?.host ?? LOOPBACK_HOST,
         idleTtlMinutes,
         jsonPath,
         lastUsedAt,

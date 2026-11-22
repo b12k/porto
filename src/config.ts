@@ -33,6 +33,10 @@ const DEFAULT_CONFIG = {
   start: 10_000,
 };
 
+// The default probe target, applied after the stored slot value, never
+// Before it: applying a default early would overwrite the remembered host.
+const LOOPBACK_HOST = '127.0.0.1';
+
 function resolveOutputSettings(settings: Pick<PortoConfig, 'env' | 'envPath' | 'jsonPath'>) {
   return {
     env: settings.env ?? DEFAULT_CONFIG.env,
@@ -100,6 +104,7 @@ export {
   defineConfig,
   fetchConfig,
   libraryName,
+  LOOPBACK_HOST,
   name,
   parseConfig,
   resolveOutputSettings,
