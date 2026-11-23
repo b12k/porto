@@ -164,7 +164,7 @@ it('reads from subdirectories without refreshing timestamps or cleaning expired 
   ]);
   const table = await runCliOutput(['show', '--all']);
   expect(table).toMatch(/WORKTREE.*VARS.*BUSY PORTS/su);
-  expect(table).toMatch(new RegExp(`repository.*${RegExp.escape(worktreePath)}.*years ago`, 'su'));
+  expect(table).toMatch(/│\s*repository\s*│.*│\s*\d+ d ago\s*│/u);
 });
 
 it('cleans only idle slots with every port free', async () => {

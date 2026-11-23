@@ -79,6 +79,7 @@ it('shows the current slot, a selected slot or all slots as JSON and a table', a
   expect(other.stdout).toContain(`API_PORT=${start + 2}`);
   expect(current.stdout).toMatch(/│\s*0\s*│/u);
   expect(other.stdout).toMatch(/│\s*1\s*│/u);
+  expect(current.stdout).toMatch(new RegExp(`│ +${start} +│[^\\n]*\\n│ +│ +${start + 1} +│`, 'u'));
   const selected = await runCli(['show', '0', '--json'], otherPath);
   expect(JSON.parse(selected.stdout)).toMatchObject({ index: 0 });
   const all = await runCli(['show', '--all', '--json']);
@@ -86,7 +87,7 @@ it('shows the current slot, a selected slot or all slots as JSON and a table', a
   const table = await runCli(['show', '--all']);
   expect(table.stdout).toMatch(/SLOT.*PORTS.*WORKTREE/su);
   expect(table.stdout).toMatch(/VARS.*BUSY PORTS/su);
-  expect(table.stdout).toContain(otherPath);
+  expect(table.stdout).toMatch(/│\s*other\s*│/u);
 });
 
 it('returns every released slot with saved values, including kept slots, and allows retries', async () => {
@@ -125,6 +126,8 @@ it('releases free slots on a busy-port failure and runs hooks for every freed sl
   server.listen({ host: '127.0.0.1', port: start + 2 });
   await once(server, 'listening');
   try {
+    const { stdout } = await runCli(['show', '1']);
+    expect(stdout).toMatch(new RegExp(`│ +${start + 2} +│$`, 'mu'));
     // The free slot is saved as released and hooked despite the busy one.
     await expect(runCli(['release', '--all'])).rejects.toThrow('Cannot release reservations while ports are in use.');
     expect(JSON.parse(await readFile(registryPath, 'utf8'))).toMatchObject({
