@@ -1,6 +1,6 @@
 /* oxlint-disable import/max-dependencies -- Output formatting needs table, dates, fs, locks and domain helpers. */
 import Table from 'cli-table3';
-import { formatDistance } from 'date-fns/formatDistance';
+import { differenceInSeconds } from 'date-fns/differenceInSeconds';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
@@ -12,12 +12,21 @@ import { assertExportPaths, assertLockPathUsable } from './export-paths';
 import { checkIsFileMissing, fetchCanonicalPath, writeFileAtomically } from './files';
 import { listBusyPorts } from './ports';
 import { checkIsExpired } from './registry';
-import { formatLabeledField, maxLineDisplayWidth, truncateMiddle, wrapCommaValue } from './terminal';
+import { formatLabeledField, maxLineDisplayWidth, wrapTextByWidth } from './terminal';
 import { formatEnvironment, formatEnvironmentValue } from './vars';
 
 // Match unrelated names too so their quoted values are skipped as a unit.
 const ENV_ASSIGNMENT_PATTERN =
   /^(?<prefix>﻿?[ \t]*(?:export[ \t]+)?)(?<name>[^#=\s][^=\r\n]*?)(?<separator>[ \t]*=[ \t]*)(?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|`[^`]*`|[^\r\n#]*?)(?<suffix>[ \t]*(?:#[^\r\n]*)?)(?=\r?$)/gmu;
+
+const WORKTREE_WIDTH = 30;
+const LAST_USED_UNITS = [
+  [86_400, 'd'],
+  [3600, 'h'],
+  [60, 'min'],
+] as const;
+
+type StatsField = [label: string, value: string];
 
 interface StatsInput {
   expiresAt: string;
@@ -33,8 +42,36 @@ interface StatsInput {
   worktreePath: string;
 }
 
-function clampWidth(termWidth: number, reserved: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, termWidth - reserved));
+function formatLastUsed(lastUsedAt: string, now: number) {
+  const elapsedSec = differenceInSeconds(now, lastUsedAt);
+  const durationSec = Math.abs(elapsedSec);
+  const [unitSec, unit] = LAST_USED_UNITS.find(([seconds]) => durationSec >= seconds) ?? [1, 'sec'];
+  const duration = `${Math.floor(durationSec / unitSec)} ${unit}`;
+  return elapsedSec < 0 ? `in ${duration}` : `${duration} ago`;
+}
+
+function formatVarsCell(vars: SlotVars) {
+  const entries = Object.entries(vars);
+  if (entries.length === 0) return '-';
+  return entries.map(([name, value]) => `${name}=${value}`).join('\n');
+}
+
+function buildStatsFields(slot: StatsInput, busy: string, now: number): [StatsField, ...Array<StatsField>] {
+  const ports = Array.from({ length: slot.lastPort - slot.firstPort + 1 }, (_, offset) => slot.firstPort + offset);
+  const worktreeName = path.basename(slot.worktreePath) || slot.worktreePath;
+  const isExpired = slot.isExpired ?? checkIsExpired(slot, now);
+  return [
+    ['SLOT', String(slot.index)],
+    ['PORTS', ports.join('\n')],
+    ['WORKTREE', wrapTextByWidth(worktreeName, WORKTREE_WIDTH)],
+    ['PATH', wrapTextByWidth(slot.worktreePath, WORKTREE_WIDTH)],
+    ['LAST USED', formatLastUsed(slot.lastUsedAt, now)],
+    ['IDLE IN', `${slot.idleTtlMinutes} min`],
+    ['KEEP', slot.keep ? 'yes' : 'no'],
+    ['EXPIRED', isExpired ? 'yes' : 'no'],
+    ['VARS', formatVarsCell(slot.vars)],
+    ['BUSY PORTS', busy],
+  ];
 }
 
 async function fetchEnvironmentContents(filePath: string) {
@@ -48,7 +85,7 @@ async function fetchEnvironmentContents(filePath: string) {
 
 function formatBusyCell(ports: Array<number>) {
   if (ports.length === 0) return '-';
-  return ports.join(', ');
+  return ports.join('\n');
 }
 
 async function fetchBusyCell(slot: Pick<StatsInput, 'firstPort' | 'host' | 'lastPort'>) {
@@ -76,18 +113,31 @@ function formatTable(headers: Array<string>, rows: Array<Array<string>>) {
   return table.toString();
 }
 
-function formatVarsCell(vars: SlotVars) {
-  const entries = Object.entries(vars);
-  if (entries.length === 0) return '-';
-  return entries.map(([name, value]) => `${name}=${value}`).join(', ');
-}
-
 function getTerminalWidth(): number | undefined {
   if (process.stdout.isTTY) {
     const width = process.stdout.columns;
     if (typeof width === 'number' && Number.isFinite(width) && width > 0) return width;
   }
   return undefined;
+}
+
+async function formatStatsTable(slots: Array<StatsInput>, terminalWidth?: number) {
+  const now = Date.now();
+  // A slot whose saved host is gone from this machine must not hide the other rows.
+  const rows = await Promise.all(slots.map(async (slot) => buildStatsFields(slot, await fetchBusyCell(slot), now)));
+  const [firstRow] = rows;
+  if (firstRow === undefined) return 'No slots.';
+  const termWidth = terminalWidth ?? getTerminalWidth();
+  const horizontal = formatTable(
+    firstRow.map(([label]) => label),
+    rows.map((fields) => fields.map(([, value]) => value)),
+  );
+  if (termWidth === undefined || maxLineDisplayWidth(horizontal) <= termWidth) return horizontal;
+  return rows
+    .map(([[label, index], ...fields]) =>
+      [`${label} ${index}`, ...fields.map(([name, value]) => formatLabeledField(name, value, termWidth))].join('\n'),
+    )
+    .join('\n\n');
 }
 
 async function saveEnvironmentFile(filePath: string, vars: SlotVars) {
@@ -124,76 +174,6 @@ async function updateEnvironmentFile(filePath: string, vars: SlotVars, commonDir
   } finally {
     await unlock();
   }
-}
-
-function wrapVarsCell(vars: SlotVars, maxLine: number) {
-  return wrapCommaValue(formatVarsCell(vars), maxLine);
-}
-
-function buildHorizontalTable(
-  slots: Array<StatsInput>,
-  busyCells: Array<string>,
-  termWidth: number | undefined,
-  now: number,
-) {
-  const pathMax = termWidth === undefined ? Number.POSITIVE_INFINITY : clampWidth(termWidth, 90, 16, 48);
-  const varsMax = termWidth === undefined ? Number.POSITIVE_INFINITY : clampWidth(termWidth, 80, 16, 50);
-  const table = new Table({
-    head: ['SLOT', 'PORTS', 'WORKTREE', 'PATH', 'LAST USED', 'IDLE (MIN)', 'KEEP', 'EXPIRED', 'VARS', 'BUSY PORTS'],
-    style: { border: [], head: [] },
-  });
-  for (const [position, slot] of slots.entries()) {
-    const busy = busyCells[position] ?? 'unknown';
-    table.push([
-      String(slot.index),
-      `${slot.firstPort}-${slot.lastPort}`,
-      path.basename(slot.worktreePath) || slot.worktreePath,
-      truncateMiddle(slot.worktreePath, pathMax),
-      formatDistance(slot.lastUsedAt, now, { addSuffix: true }),
-      String(slot.idleTtlMinutes),
-      slot.keep ? 'yes' : 'no',
-      (slot.isExpired ?? checkIsExpired(slot, now)) ? 'yes' : 'no',
-      wrapVarsCell(slot.vars, varsMax),
-      busy,
-    ]);
-  }
-  return table.toString();
-}
-
-function formatStatsVertical(slots: Array<StatsInput>, busyCells: Array<string>, termWidth: number) {
-  const now = Date.now();
-  return slots
-    .map((slot, position) => {
-      const busy = busyCells[position] ?? 'unknown';
-      const expired = (slot.isExpired ?? checkIsExpired(slot, now)) ? 'yes' : 'no';
-      return [
-        `SLOT ${slot.index}`,
-        `  PORTS: ${slot.firstPort}-${slot.lastPort}`,
-        formatLabeledField('WORKTREE', path.basename(slot.worktreePath) || slot.worktreePath, termWidth),
-        formatLabeledField('PATH', slot.worktreePath, termWidth),
-        formatLabeledField('LAST USED', formatDistance(slot.lastUsedAt, now, { addSuffix: true }), termWidth),
-        formatLabeledField('IDLE (MIN)', String(slot.idleTtlMinutes), termWidth),
-        formatLabeledField('KEEP', slot.keep ? 'yes' : 'no', termWidth),
-        formatLabeledField('EXPIRED', expired, termWidth),
-        formatLabeledField('VARS', formatVarsCell(slot.vars), termWidth),
-        formatLabeledField('BUSY PORTS', busy, termWidth),
-      ].join('\n');
-    })
-    .join('\n\n');
-}
-
-async function formatStatsTable(slots: Array<StatsInput>, terminalWidth?: number) {
-  const now = Date.now();
-  // A slot whose saved host is gone from this machine must not hide the other rows.
-  const busyCells = await Promise.all(slots.map((slot) => fetchBusyCell(slot)));
-  if (slots.length === 0) return 'No slots.';
-  const termWidth = terminalWidth ?? getTerminalWidth();
-  if (termWidth === undefined) {
-    return buildHorizontalTable(slots, busyCells, termWidth, now);
-  }
-  const horizontal = buildHorizontalTable(slots, busyCells, termWidth, now);
-  if (maxLineDisplayWidth(horizontal) <= termWidth) return horizontal;
-  return formatStatsVertical(slots, busyCells, termWidth);
 }
 
 async function writeReserveJsonFile(filePath: string, vars: SlotVars) {

@@ -62,6 +62,8 @@ function maxLineDisplayWidth(text: string) {
   return max;
 }
 
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
 function wrapTextByWidth(text: string, maxWidth: number) {
   if (maxWidth <= 0) {
     return text;
@@ -72,15 +74,15 @@ function wrapTextByWidth(text: string, maxWidth: number) {
   const lines: Array<string> = [];
   let current = '';
   let currentWidth = 0;
-  for (const char of text) {
-    const charWidth = displayWidth(char);
-    if (current !== '' && currentWidth + charWidth > maxWidth) {
+  for (const { segment } of graphemeSegmenter.segment(text)) {
+    const segmentWidth = displayWidth(segment);
+    if (current !== '' && currentWidth + segmentWidth > maxWidth) {
       lines.push(current);
       current = '';
       currentWidth = 0;
     }
-    current += char;
-    currentWidth += charWidth;
+    current += segment;
+    currentWidth += segmentWidth;
   }
   if (current !== '') {
     lines.push(current);
@@ -88,82 +90,11 @@ function wrapTextByWidth(text: string, maxWidth: number) {
   return lines.join('\n');
 }
 
-function pushWrappedPart(lines: Array<string>, part: string, maxWidth: number) {
-  if (displayWidth(part) <= maxWidth) {
-    lines.push(part);
-  } else {
-    for (const hardLine of wrapTextByWidth(part, maxWidth).split('\n')) {
-      lines.push(hardLine);
-    }
-  }
-}
-
-function wrapCommaValue(value: string, maxWidth: number) {
-  if (displayWidth(value) <= maxWidth) {
-    return value;
-  }
-  const lines: Array<string> = [];
-  let current = '';
-  for (const part of value.split(', ')) {
-    const candidate = current === '' ? part : `${current}, ${part}`;
-    if (current !== '' && displayWidth(candidate) > maxWidth) {
-      // Keep the separator at the end of the broken line.
-      pushWrappedPart(lines, `${current},`, maxWidth);
-      current = part;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current !== '') {
-    pushWrappedPart(lines, current, maxWidth);
-  }
-  return lines.join('\n');
-}
-
 function formatLabeledField(label: string, value: string, termWidth: number) {
   const prefix = `  ${label}: `;
   const continuationIndent = '    ';
-  const maxFirst = termWidth - displayWidth(prefix);
-  const maxCont = termWidth - displayWidth(continuationIndent);
-  if (maxFirst <= 0 || maxCont <= 0) {
-    return `${prefix}${value}`;
-  }
-  const limit = Math.min(maxFirst, maxCont);
-  const wrapped = wrapCommaValue(value, limit);
-  const parts = wrapped.split('\n');
-  const first = parts[0] ?? '';
-  const rest = parts.slice(1).map((line) => `${continuationIndent}${line}`);
-  return [`${prefix}${first}`, ...rest].join('\n');
+  const maxWidth = termWidth - displayWidth(prefix);
+  const [first, ...rest] = value.split('\n').flatMap((line) => wrapTextByWidth(line, maxWidth).split('\n'));
+  return [`${prefix}${first ?? ''}`, ...rest.map((line) => `${continuationIndent}${line}`)].join('\n');
 }
-
-const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-
-function truncateMiddle(text: string, maxLength: number) {
-  if (displayWidth(text) <= maxLength) return text;
-  const ellipsis = '…';
-  const keep = maxLength - displayWidth(ellipsis);
-  const front = Math.ceil(keep / 2);
-  const back = Math.floor(keep / 2);
-  const segments = [...graphemeSegmenter.segment(text)].map((segment) => segment.segment);
-  const head: Array<string> = [];
-  let headWidth = 0;
-  for (const segment of segments) {
-    const width = displayWidth(segment);
-    if (headWidth + width > front) break;
-    head.push(segment);
-    headWidth += width;
-  }
-  const tail: Array<string> = [];
-  let tailWidth = 0;
-  for (let position = segments.length - 1; position >= 0; position -= 1) {
-    const segment = segments[position];
-    if (segment === undefined) break;
-    const width = displayWidth(segment);
-    if (tailWidth + width > back) break;
-    tail.unshift(segment);
-    tailWidth += width;
-  }
-  return `${head.join('')}${ellipsis}${tail.join('')}`;
-}
-
-export { displayWidth, formatLabeledField, maxLineDisplayWidth, truncateMiddle, wrapCommaValue, wrapTextByWidth };
+export { formatLabeledField, maxLineDisplayWidth, wrapTextByWidth };

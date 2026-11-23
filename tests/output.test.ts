@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { writeFileAtomically } from '../src/files';
-import { updateEnvironmentFile } from '../src/output';
+import { formatStatsTable, updateEnvironmentFile } from '../src/output';
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -31,6 +31,56 @@ afterEach(async () => {
     throw new Error('Refusing to remove a directory outside the test fixture.');
   }
   await rm(targetPath, { force: true, recursive: true });
+});
+
+it('wraps worktree names and paths and stacks lists in both show layouts', async () => {
+  const worktreeName = 'x'.repeat(36);
+  const worktreePath = path.join(path.parse(directoryPath).root, worktreeName);
+  const now = Date.now();
+  const slots = [
+    {
+      expiresAt: new Date(now + 60 * 60_000).toISOString(),
+      firstPort: 10_000,
+      idleTtlMinutes: 60,
+      index: 0,
+      keep: false,
+      lastPort: 10_001,
+      lastUsedAt: new Date(now - 65_000).toISOString(),
+      vars: { PORT: 10_000, TITLE: 'first, second' },
+      worktreePath,
+    },
+  ];
+  const horizontal = await formatStatsTable(slots, 200);
+  const rows = horizontal
+    .split('\n')
+    .filter((line) => line.startsWith('│'))
+    .slice(1)
+    .map((line) =>
+      line
+        .split('│')
+        .slice(1, 10)
+        .map((cell) => cell.trim()),
+    );
+  expect(rows).toEqual([
+    [
+      '0',
+      '10000',
+      worktreeName.slice(0, 30),
+      worktreePath.slice(0, 30),
+      '1 min ago',
+      '60 min',
+      'no',
+      'no',
+      'PORT=10000',
+    ],
+    ['', '10001', worktreeName.slice(30), worktreePath.slice(30), '', '', '', '', 'TITLE=first, second'],
+  ]);
+  const vertical = await formatStatsTable(slots, 44);
+  expect(vertical).toContain('  PORTS: 10000\n    10001');
+  expect(vertical).toContain(`  WORKTREE: ${worktreeName.slice(0, 30)}\n    ${worktreeName.slice(30)}`);
+  expect(vertical).toContain(`  PATH: ${worktreePath.slice(0, 30)}\n    ${worktreePath.slice(30)}`);
+  expect(vertical).toContain('  LAST USED: 1 min ago\n  IDLE IN: 60 min');
+  expect(vertical).toContain('  VARS: PORT=10000\n    TITLE=first, second');
 });
 
 it('preserves both concurrent updates of the same env file', async () => {
