@@ -57,7 +57,9 @@ function formatVarsCell(vars: SlotVars) {
 }
 
 function buildStatsFields(slot: StatsInput, busy: string, now: number): [StatsField, ...Array<StatsField>] {
-  const ports = Array.from({ length: slot.lastPort - slot.firstPort + 1 }, (_, offset) => slot.firstPort + offset);
+  const ports = [String(slot.firstPort)];
+  if (slot.lastPort > slot.firstPort + 1) ports.push('...');
+  if (slot.lastPort > slot.firstPort) ports.push(String(slot.lastPort));
   const worktreeName = path.basename(slot.worktreePath) || slot.worktreePath;
   const isExpired = slot.isExpired ?? checkIsExpired(slot, now);
   return [
