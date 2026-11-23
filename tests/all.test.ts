@@ -79,7 +79,7 @@ it('shows the current slot, a selected slot or all slots as JSON and a table', a
   expect(other.stdout).toContain(`API_PORT=${start + 2}`);
   expect(current.stdout).toMatch(/│\s*0\s*│/u);
   expect(other.stdout).toMatch(/│\s*1\s*│/u);
-  expect(current.stdout).toMatch(new RegExp(`│ +${start} +│[^\\n]*\\n│ +│ +${start + 1} +│`, 'u'));
+  expect(current.stdout).toMatch(new RegExp(`│ +${start}-${start + 1} +│`, 'u'));
   const selected = await runCli(['show', '0', '--json'], otherPath);
   expect(JSON.parse(selected.stdout)).toMatchObject({ index: 0 });
   const all = await runCli(['show', '--all', '--json']);

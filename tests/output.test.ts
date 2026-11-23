@@ -33,7 +33,7 @@ afterEach(async () => {
   await rm(targetPath, { force: true, recursive: true });
 });
 
-it('wraps worktree names and paths and stacks lists in both show layouts', async () => {
+it('shows the port range on one line in both show layouts', async () => {
   const worktreeName = 'x'.repeat(36);
   const worktreePath = path.join(path.parse(directoryPath).root, worktreeName);
   const now = Date.now();
@@ -44,7 +44,7 @@ it('wraps worktree names and paths and stacks lists in both show layouts', async
       idleTtlMinutes: 60,
       index: 0,
       keep: false,
-      lastPort: 10_001,
+      lastPort: 10_009,
       lastUsedAt: new Date(now - 65_000).toISOString(),
       vars: { PORT: 10_000, TITLE: 'first, second' },
       worktreePath,
@@ -64,7 +64,7 @@ it('wraps worktree names and paths and stacks lists in both show layouts', async
   expect(rows).toEqual([
     [
       '0',
-      '10000',
+      '10000-10009',
       worktreeName.slice(0, 30),
       worktreePath.slice(0, 30),
       '1 min ago',
@@ -73,10 +73,10 @@ it('wraps worktree names and paths and stacks lists in both show layouts', async
       'no',
       'PORT=10000',
     ],
-    ['', '10001', worktreeName.slice(30), worktreePath.slice(30), '', '', '', '', 'TITLE=first, second'],
+    ['', '', worktreeName.slice(30), worktreePath.slice(30), '', '', '', '', 'TITLE=first, second'],
   ]);
   const vertical = await formatStatsTable(slots, 44);
-  expect(vertical).toContain('  PORTS: 10000\n    10001');
+  expect(vertical).toContain('  PORTS: 10000-10009\n  WORKTREE:');
   expect(vertical).toContain(`  WORKTREE: ${worktreeName.slice(0, 30)}\n    ${worktreeName.slice(30)}`);
   expect(vertical).toContain(`  PATH: ${worktreePath.slice(0, 30)}\n    ${worktreePath.slice(30)}`);
   expect(vertical).toContain('  LAST USED: 1 min ago\n  IDLE IN: 60 min');
