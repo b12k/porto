@@ -6,6 +6,8 @@ on:
       - master
     paths-ignore:
       - 'docs/**'
+      - 'rspress.config.ts'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 concurrency:
