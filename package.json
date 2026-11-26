@@ -50,6 +50,7 @@
   },
   "scripts": {
     "build": "rslib",
+    "build:docs": "rspress build",
     "check": "run-p -l check:*",
     "check:format": "oxfmt . --check",
     "check:scripts": "oxlint",
@@ -60,6 +61,7 @@
     "deps:update:doctor": "run-p -l check:types check:scripts check:tests build",
     "deps:update:install": "pnpm i --no-frozen-lockfile",
     "dev": "rslib --watch",
+    "dev:docs": "rspress dev",
     "fix": "run-s -l fix:*",
     "fix:format": "oxfmt . --write",
     "fix:scripts": "oxlint --fix",
@@ -69,6 +71,7 @@
     "husky:pre-push": "branch-name-lint",
     "prepack": "run-p check build",
     "prepare": "husky",
+    "preview:docs": "rspress preview",
     "release": "release-it",
     "test": "rstest run"
   },
@@ -88,6 +91,7 @@
     "@commitlint/config-conventional": "21.2.4",
     "@release-it/conventional-changelog": "12.0.2",
     "@rslib/core": "1.0.7",
+    "@rspress/core": "2.1.4",
     "@rstest/core": "0.12.6",
     "@types/node": "26.6.10",
     "@types/proper-lockfile": "4.1.4",

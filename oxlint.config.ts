@@ -17,7 +17,7 @@ export default {
     suspicious: 'error',
   },
   env: { node: true },
-  ignorePatterns: ['dist', 'node_modules'],
+  ignorePatterns: ['dist', 'doc_build', 'node_modules'],
   jsPlugins: ['eslint-plugin-perfectionist'],
   options: { denyWarnings: true, reportUnusedDisableDirectives: 'error', typeAware: true },
   overrides: [
