@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://porto.b12k.com/sitemap.xml
