@@ -25,5 +25,5 @@
     "verbatimModuleSyntax": true
   },
   "include": ["**/*", ".github/**/*", ".release-it.ts"],
-  "exclude": ["dist"]
+  "exclude": ["dist", "doc_build"]
 }
